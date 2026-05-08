@@ -1,0 +1,94 @@
+name = "bishop-proxy"
+main = "src/index.ts"
+compatibility_date = "2026-04-27"
+compatibility_flags = ["nodejs_compat"]
+
+routes = [
+  { pattern = "proxy.mybishop.ai/*", zone_name = "mybishop.ai" }
+]
+
+[[durable_objects.bindings]]
+name = "TIER_CACHE"
+class_name = "TierCacheDO"
+
+[[durable_objects.bindings]]
+name = "AUTH_STORE"
+class_name = "AuthStoreDO"
+
+[[durable_objects.bindings]]
+name = "QUOTA_STORE"
+class_name = "QuotaStoreDO"
+
+[[kv_namespaces]]
+binding = "ENROLL_KV"
+id = "f019f4a7ca1842589e2fe868e91c44c8"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TierCacheDO"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["AuthStoreDO"]
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["QuotaStoreDO"]
+
+[ai]
+binding = "AI"
+
+[vars]
+TARGET_ZERO_BITS = "10"
+
+[env.staging]
+name = "bishop-proxy-staging"
+routes = [
+  { pattern = "proxy-staging.mybishop.ai/*", zone_name = "mybishop.ai" }
+]
+
+[[env.staging.durable_objects.bindings]]
+name = "TIER_CACHE"
+class_name = "TierCacheDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "AUTH_STORE"
+class_name = "AuthStoreDO"
+
+[[env.staging.durable_objects.bindings]]
+name = "QUOTA_STORE"
+class_name = "QuotaStoreDO"
+
+[[env.staging.kv_namespaces]]
+binding = "ENROLL_KV"
+id = "5b4e4ffe44b24bb4bbf93612118fb35e"
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["TierCacheDO"]
+
+[[env.staging.migrations]]
+tag = "v2"
+new_classes = ["AuthStoreDO"]
+
+[[env.staging.migrations]]
+tag = "v3"
+new_sqlite_classes = ["QuotaStoreDO"]
+
+[env.staging.ai]
+binding = "AI"
+
+[env.staging.vars]
+TARGET_ZERO_BITS = "10"
+
+# Secrets set via `wrangler secret put`:
+#   STRIPE_WEBHOOK_SECRET   - signs incoming Stripe webhook calls
+#   ANTHROPIC_API_KEY       - upstream Anthropic API credential
+#   USER_INDEX_HMAC_KEY     - HMAC-SHA256 key for AuthStoreDO
+#                             user:<HMAC(user_id)> → token_id index. Required
+#                             before /v1/tier/bind and Stripe two-shard write
+#                             can compute lookups.
+
+[env.spike]
+name = "bishop-proxy-spike"
+main = "src/spike/pow-feasibility.ts"

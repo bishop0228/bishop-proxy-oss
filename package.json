@@ -1,0 +1,24 @@
+{
+  "name": "bishop-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bishop's inference proxy — server-side tier verification, per-user quota enforcement, content classification, and outbound-allowlist enforcement for the Bishop runtime. Source-available under BSL 1.1.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "dev": "wrangler dev",
+    "pretest": "rm -rf .wrangler/state",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251001.0",
+    "miniflare": "^4.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "wrangler": "^3.80.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0"
+  }
+}
