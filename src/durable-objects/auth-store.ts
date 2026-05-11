@@ -258,26 +258,8 @@ export class AuthStoreDO {
             stripe_event_id: null,
           }),
         });
-        if (!seedResp.ok) {
-          console.log(JSON.stringify({
-            event_type: "error",
-            timestamp: new Date().toISOString(),
-            request_id: null,
-            token_id: finalRecord.token_id,
-            response_status: seedResp.status,
-            note: "tier_cache_seed_failed",
-          }));
-        }
       } catch (err) {
-        console.log(JSON.stringify({
-          event_type: "error",
-          timestamp: new Date().toISOString(),
-          request_id: null,
-          token_id: finalRecord.token_id,
-          response_status: null,
-          note: "tier_cache_seed_threw",
-          error: err instanceof Error ? err.message : String(err),
-        }));
+        void err;
       }
     }
 

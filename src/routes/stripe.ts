@@ -157,14 +157,8 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
     // Token-keyed shard write is best-effort — failing it must not fail the
     // webhook (Stripe retries on non-2xx, which would re-apply the user-keyed
     // shard via the idempotency guard but provides no path to recover the
-    // token-keyed write). Logged for observability.
-    console.log(JSON.stringify({
-      event_type: "error",
-      timestamp: new Date().toISOString(),
-      stripe_event_id: event.id,
-      note: "tier_cache_token_shard_failed",
-      error: err instanceof Error ? err.message : String(err),
-    }));
+    // token-keyed write).
+    void err;
   }
 
   return new Response(
