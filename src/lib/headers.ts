@@ -32,5 +32,6 @@ export function rebuildHeaders(incoming: Headers, anthropicKey: string): Headers
   if (!out.has("content-type")) {
     out.set("content-type", "application/json");
   }
+  out.set("x-bishop-zdr", "1");
   return out;
 }
