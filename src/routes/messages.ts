@@ -163,7 +163,33 @@ export async function handleMessages(
   // Step 5 — content classifier.
   const cls = await classify(body, env);
 
-  // Step 5.5 — block path: fail-closed on any non-allow decision.
+  // Step 5.5a — allow-path audit event: emit classification record for every passing request.
+  if (cls.decision === "allow") {
+    const allowEvent: ProxyLogEvent = {
+      event_type: "classification",
+      timestamp: new Date().toISOString(),
+      request_id: requestId,
+      token_id: tokenId,
+      ip,
+      request_size_bytes: requestSize,
+      response_status: 0,
+      response_size_bytes: 0,
+      token_count_in: null,
+      token_count_out: null,
+      cached_tokens: null,
+      cache_creation_input_tokens: null,
+      cache_read_input_tokens: null,
+      classification_decision: "allow",
+      classification_category: cls.category,
+      classifier_error_reason: cls.classifier_error_reason,
+      duration_ms: Date.now() - startedAt,
+      upstream_status: null,
+      cap_type_hit: null,
+    };
+    try { logEvent(allowEvent); } catch { /* shape error is itself an audit signal */ }
+  }
+
+  // Step 5.5b — block path: fail-closed on any non-allow decision.
   if (cls.decision === "block") {
     const blockEvent: ProxyLogEvent = {
       event_type: "classification",

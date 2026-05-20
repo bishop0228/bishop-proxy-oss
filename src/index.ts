@@ -41,6 +41,8 @@ export interface Env {
   TARGET_MEMORY_KIB?: string;
   AI: Ai;
   MOCK_AI?: string;
+  CLASSIFIER_MODEL?: string;
+  CLASSIFIER_URL?: string;
   // Test-only: comma-separated extra hostnames added to the outbound allowlist
   // via _setAllowlistForTesting. Never set in production. Mirrors the MOCK_AI
   // pattern — present in the bundle but only activated in test deployments.
