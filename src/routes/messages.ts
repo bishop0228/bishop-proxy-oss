@@ -60,7 +60,7 @@ function injectSystemCacheControl(
   };
 }
 
-function ip24From(request: Request): string {
+export function ip24From(request: Request): string {
   const cf = request.headers.get("cf-connecting-ip") ?? "0.0.0.0";
   // IPv4 /24 truncation. IPv6 falls through (treat as opaque).
   const parts = cf.split(".");
@@ -70,7 +70,7 @@ function ip24From(request: Request): string {
   return cf;
 }
 
-function jsonError(status: number, error: string, extras: Record<string, unknown> = {}): Response {
+export function jsonError(status: number, error: string, extras: Record<string, unknown> = {}): Response {
   return new Response(JSON.stringify({ error, ...extras }), {
     status,
     headers: { "content-type": "application/json" },
@@ -229,8 +229,8 @@ export async function handleMessages(
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, env.ANTHROPIC_API_KEY);
   if (!keyResolution.ok) {
-    emitError(requestId, ip, requestSize, 400, "byok_key_missing", startedAt, tokenId);
-    return jsonError(400, "byok_key_missing");
+    emitError(requestId, ip, requestSize, 400, keyResolution.reason, startedAt, tokenId);
+    return jsonError(400, keyResolution.reason);
   }
   const upstreamHeaders = rebuildHeaders(request.headers, keyResolution.key);
 
@@ -307,7 +307,7 @@ export async function handleMessages(
   });
 }
 
-async function readTier(env: Env, tokenId: string): Promise<Tier> {
+export async function readTier(env: Env, tokenId: string): Promise<Tier> {
   try {
     const stub = env.TIER_CACHE.get(env.TIER_CACHE.idFromName(tokenId));
     const resp = await stub.fetch("https://internal/", { method: "GET" });
@@ -323,7 +323,7 @@ async function readTier(env: Env, tokenId: string): Promise<Tier> {
 // (the dollar-denominated cap is the user-visible billing surface).
 // X-Bishop-Cap-Type is "null" on success-with-headroom; the 429 path uses
 // "monthly_cost" / "monthly_tasks" / "daily" via emitRateLimit's header set.
-async function buildResponseHeaders(
+export async function buildResponseHeaders(
   env: Env,
   tokenId: string,
   tier: Tier,
@@ -361,9 +361,9 @@ async function buildResponseHeaders(
 // 200ms, 800ms between attempts. NO retry on 4xx (client error — pass through).
 // Streaming retry constraint: this only fires before tee() begins; once the
 // body has been split and returned to the client, no retry is attempted.
-const RETRY_BACKOFF_MS = [200, 800];
+export const RETRY_BACKOFF_MS = [200, 800];
 
-async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+export async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) {
@@ -386,7 +386,7 @@ async function fetchWithRetry(url: string, init: RequestInit): Promise<Response>
   throw lastError;
 }
 
-function capTypeFromReason(reason: string | undefined): ProxyLogEvent["cap_type_hit"] {
+export function capTypeFromReason(reason: string | undefined): ProxyLogEvent["cap_type_hit"] {
   if (reason === "monthly_cost_exceeded") return "monthly_cost";
   if (reason === "monthly_tasks_exceeded") return "monthly_tasks";
   if (reason === "daily_floor_exceeded") return "daily_floor";
@@ -396,12 +396,12 @@ function capTypeFromReason(reason: string | undefined): ProxyLogEvent["cap_type_
 // "daily" is the X-Bishop-Cap-Type value for daily-floor 429s. Internal
 // cap_type_hit is "daily_floor" for log consistency; the header value is
 // the user-visible label.
-function capTypeHeaderValue(cap: ProxyLogEvent["cap_type_hit"]): string {
+export function capTypeHeaderValue(cap: ProxyLogEvent["cap_type_hit"]): string {
   if (cap === "daily_floor") return "daily";
   return cap ?? "null";
 }
 
-function emitError(
+export function emitError(
   request_id: string,
   ip: string,
   request_size_bytes: number,
@@ -434,7 +434,7 @@ function emitError(
   try { logEvent(event); } catch { /* shape error is itself an audit signal */ }
 }
 
-function emitRateLimit(
+export function emitRateLimit(
   request_id: string,
   ip: string,
   request_size_bytes: number,
@@ -466,7 +466,7 @@ function emitRateLimit(
   try { logEvent(event); } catch { /* */ }
 }
 
-interface ResponseLogParams {
+export interface ResponseLogParams {
   request_id: string;
   token_id: string;
   ip: string;
@@ -484,7 +484,7 @@ interface ResponseLogParams {
   upstream_status: number;
 }
 
-function emitResponse(p: ResponseLogParams): void {
+export function emitResponse(p: ResponseLogParams): void {
   const event: ProxyLogEvent = {
     event_type: "response",
     timestamp: new Date().toISOString(),

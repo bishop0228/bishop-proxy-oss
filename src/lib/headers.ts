@@ -19,10 +19,17 @@ const FORWARD_ALLOWLIST = new Set<string>([
 export function resolveUpstreamKey(
   accountMode: "managed" | "byok",
   incoming: Headers,
-  operatorKey: string,
-): { ok: true; key: string } | { ok: false; reason: "byok_key_missing" } {
+  operatorKey: string | null,
+): { ok: true; key: string } | { ok: false; reason: "byok_key_missing" | "managed_key_unavailable" } {
   if (accountMode === "managed") {
-    return { ok: true, key: operatorKey };
+    // Managed mode never reads the inbound upstream-key header. If no operator
+    // key is bound for this provider, the route is structurally BYOK-only and
+    // fails closed — it does NOT fall back to the inbound header.
+    const op = (operatorKey ?? "").trim();
+    if (!op) {
+      return { ok: false, reason: "managed_key_unavailable" };
+    }
+    return { ok: true, key: op };
   }
   const inbound = (incoming.get("x-bishop-upstream-key") ?? "").trim();
   if (!inbound) {
@@ -48,5 +55,26 @@ export function rebuildHeaders(incoming: Headers, anthropicKey: string): Headers
     out.set("content-type", "application/json");
   }
   out.set("x-bishop-zdr", "1");
+  return out;
+}
+
+/**
+ * Request header rebuild for upstream OpenAI call.
+ *
+ * OpenAI authenticates with a Bearer token (not anthropic's x-api-key), and has
+ * no per-request ZDR or anthropic-version markers. We forward ONLY content-type
+ * and inject the resolved OpenAI key as Bearer. All client identifiers
+ * (inbound authorization, cookie, x-bishop-upstream-key, user-agent,
+ * x-forwarded-for) are dropped — Pillar 1 identifier-strip.
+ */
+const OPENAI_FORWARD_ALLOWLIST = new Set<string>(["content-type"]);
+
+export function rebuildOpenAIHeaders(incoming: Headers, openaiKey: string): Headers {
+  const out = new Headers();
+  for (const [key, value] of incoming.entries()) {
+    if (OPENAI_FORWARD_ALLOWLIST.has(key.toLowerCase())) out.set(key, value);
+  }
+  out.set("authorization", `Bearer ${openaiKey}`);
+  if (!out.has("content-type")) out.set("content-type", "application/json");
   return out;
 }
