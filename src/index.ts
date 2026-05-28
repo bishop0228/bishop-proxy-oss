@@ -23,6 +23,7 @@ import { handleStripeWebhook } from "./routes/stripe";
 import { handleChallenge } from "./routes/challenge";
 import { handleEnroll } from "./routes/enroll";
 import { handleMessages } from "./routes/messages";
+import { handleChatCompletions } from "./routes/chat-completions";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -34,6 +35,8 @@ export interface Env {
   ENROLL_KV: KVNamespace;
   STRIPE_WEBHOOK_SECRET: string;
   ANTHROPIC_API_KEY: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -114,6 +117,9 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/messages") {
       return handleMessages(request, env, ctx);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
+      return handleChatCompletions(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
       return handleTierBind(request, env);
