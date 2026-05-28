@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { rebuildHeaders, resolveUpstreamKey } from "../src/lib/headers";
+import { rebuildHeaders, rebuildOpenAIHeaders, resolveUpstreamKey } from "../src/lib/headers";
 
 describe("resolveUpstreamKey — BYOK entitlement gate", () => {
   const OP_KEY = "op-key-abc";
@@ -40,6 +40,76 @@ describe("resolveUpstreamKey — BYOK entitlement gate", () => {
     const result = resolveUpstreamKey("byok", new Headers(), OP_KEY);
     expect(result.ok).toBe(false);
     expect("key" in result).toBe(false);
+  });
+});
+
+describe("resolveUpstreamKey — managed-side generalization (§1.17.11-PROXY-V)", () => {
+  const OP_KEY = "op-key-abc";
+
+  it("V1: managed + non-null operator key → {ok:true, key:operatorKey} [regression]", () => {
+    const result = resolveUpstreamKey("managed", new Headers(), OP_KEY);
+    expect(result).toEqual({ ok: true, key: OP_KEY });
+  });
+
+  it("V2: managed + null operator → fail-closed managed_key_unavailable [fail-closed positive]", () => {
+    const result = resolveUpstreamKey("managed", new Headers(), null);
+    expect(result).toEqual({ ok: false, reason: "managed_key_unavailable" });
+  });
+
+  it("V3: managed + whitespace-only operator → managed_key_unavailable [boundary]", () => {
+    const result = resolveUpstreamKey("managed", new Headers(), "   ");
+    expect(result).toEqual({ ok: false, reason: "managed_key_unavailable" });
+  });
+
+  it("V4: NEG — managed + inbound upstream-key PRESENT + null operator → fail-closed, never reads inbound", () => {
+    const h = new Headers({ "x-bishop-upstream-key": "user-supplied-key" });
+    const result = resolveUpstreamKey("managed", h, null);
+    expect(result).toEqual({ ok: false, reason: "managed_key_unavailable" });
+    // Structural proof: even with an inbound key present, managed mode fails
+    // closed and never surfaces the inbound value.
+    if (!result.ok) {
+      expect((result as { key?: string }).key).toBeUndefined();
+    }
+  });
+
+  it("V5: byok + present key → user key [preserved cross-check after signature change]", () => {
+    const h = new Headers({ "x-bishop-upstream-key": "user-supplied-key" });
+    const result = resolveUpstreamKey("byok", h, OP_KEY);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.key).toBe("user-supplied-key");
+      expect(result.key).not.toBe(OP_KEY);
+    }
+  });
+});
+
+describe("rebuildOpenAIHeaders — provider shape + identifier-strip (§1.17.11-PROXY-V)", () => {
+  it("V6: sets authorization Bearer <key>, NO x-api-key/anthropic-version/x-bishop-zdr [provider-shape]", () => {
+    const incoming = new Headers({ "content-type": "application/json" });
+    const out = rebuildOpenAIHeaders(incoming, "sk-openai-123");
+    expect(out.get("authorization")).toBe("Bearer sk-openai-123");
+    expect(out.get("x-api-key")).toBeNull();
+    expect(out.get("anthropic-version")).toBeNull();
+    expect(out.get("x-bishop-zdr")).toBeNull();
+  });
+
+  it("V7: strips inbound authorization/cookie/x-bishop-upstream-key, forwards only content-type [Pillar 1]", () => {
+    const incoming = new Headers({
+      "authorization": "Bearer client-bishop-token",
+      "cookie": "session=abc",
+      "x-bishop-upstream-key": "user-supplied-key",
+      "user-agent": "evil/1.0",
+      "x-forwarded-for": "1.2.3.4",
+      "content-type": "application/json",
+    });
+    const out = rebuildOpenAIHeaders(incoming, "sk-openai-123");
+    // Injected Bearer replaces the inbound client token.
+    expect(out.get("authorization")).toBe("Bearer sk-openai-123");
+    expect(out.get("cookie")).toBeNull();
+    expect(out.get("x-bishop-upstream-key")).toBeNull();
+    expect(out.get("user-agent")).toBeNull();
+    expect(out.get("x-forwarded-for")).toBeNull();
+    expect(out.get("content-type")).toBe("application/json");
   });
 });
 
