@@ -29,6 +29,7 @@ interface EnrollRequest {
   counter: string;
   fingerprint_hash: string;
   client_version: string;
+  account_mode?: string;
 }
 
 function isHex(s: string, expectedLen: number): boolean {
@@ -77,9 +78,15 @@ export async function handleEnroll(
     );
   }
 
-  const { nonce, counter, fingerprint_hash, client_version } = body;
+  const { nonce, counter, fingerprint_hash, client_version, account_mode } = body;
 
   // 1. Validate field shapes
+  if (account_mode !== undefined && account_mode !== "managed" && account_mode !== "byok") {
+    return new Response(
+      JSON.stringify({ error: "invalid_account_mode" }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
   if (!isHex(nonce, 32)) {
     return new Response(
       JSON.stringify({ error: "invalid_nonce" }),
@@ -169,7 +176,7 @@ export async function handleEnroll(
   const issueResp = await stub.fetch("https://auth-store/issue", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fingerprint_hash, client_version }),
+    body: JSON.stringify({ fingerprint_hash, client_version, account_mode }),
   });
   const record = (await issueResp.json()) as AuthRecord;
 

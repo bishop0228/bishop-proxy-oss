@@ -22,6 +22,7 @@ export interface AuthRecord {
   last_seen: string | null;   // P2 populates on /v1/messages
   refresh_count: number;      // 0 at P1; P2 increments
   client_version: string;
+  account_mode: "managed" | "byok";
 }
 
 export interface AuthStoreEnv {
@@ -49,10 +50,14 @@ export class AuthStoreDO {
       const body = (await request.json()) as {
         fingerprint_hash: string;
         client_version: string;
+        account_mode?: string;
       };
+      const accountMode: "managed" | "byok" =
+        body.account_mode === "byok" ? "byok" : "managed";
       const { record, isNew } = await this._issueToken(
         body.fingerprint_hash,
         body.client_version,
+        accountMode,
       );
       return new Response(JSON.stringify(record), {
         status: isNew ? 201 : 200,
@@ -198,6 +203,7 @@ export class AuthStoreDO {
   private async _issueToken(
     fingerprint_hash: string,
     client_version: string,
+    account_mode: "managed" | "byok" = "managed",
   ): Promise<{ record: AuthRecord; isNew: boolean }> {
     // Pre-transaction idempotency check
     const existing = await this._lookupByFingerprint(fingerprint_hash);
@@ -220,6 +226,7 @@ export class AuthStoreDO {
       last_seen: null,
       refresh_count: 0,
       client_version,
+      account_mode,
     };
 
     // Atomic dual-index write inside a single transaction
