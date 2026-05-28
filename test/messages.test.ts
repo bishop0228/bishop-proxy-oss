@@ -81,7 +81,11 @@ function solvePow(
   throw new Error("No solution found");
 }
 
-async function enroll(worker: Unstable_DevWorker, fp: string): Promise<string> {
+async function enroll(
+  worker: Unstable_DevWorker,
+  fp: string,
+  account_mode?: string,
+): Promise<string> {
   const challengeRes = await worker.fetch("/v1/challenge");
   if (challengeRes.status !== 200) {
     const body = await challengeRes.text();
@@ -91,15 +95,17 @@ async function enroll(worker: Unstable_DevWorker, fp: string): Promise<string> {
   if (!cBody.nonce) throw new Error(`challenge returned no nonce: ${JSON.stringify(cBody)}`);
   const nonce = cBody.nonce;
   const counter = solvePow(fp, nonce, 8, 8);
+  const enrollBody: Record<string, string> = {
+    nonce,
+    counter,
+    fingerprint_hash: fp,
+    client_version: TEST_VERSION,
+  };
+  if (account_mode !== undefined) enrollBody["account_mode"] = account_mode;
   const enrollRes = await worker.fetch("/v1/enroll", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      nonce,
-      counter,
-      fingerprint_hash: fp,
-      client_version: TEST_VERSION,
-    }),
+    body: JSON.stringify(enrollBody),
   });
   expect([200, 201]).toContain(enrollRes.status);
   const rec = (await enrollRes.json()) as { token: string };
@@ -295,5 +301,36 @@ describe("POST /v1/messages", () => {
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text).toContain("event: message_stop");
+  }, 60000);
+
+  it("P7: byok enroll + POST /v1/messages without X-Bishop-Upstream-Key → 400 byok_key_missing", async () => {
+    const byokToken = await enroll(worker, "f".repeat(64), "byok");
+    await setMockMode(mock, "success");
+    const res = await worker.fetch("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        // No X-Bishop-Upstream-Key — must fail-closed
+      },
+      body: JSON.stringify({ model: "claude-haiku-4-5", stream: true }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("byok_key_missing");
+  }, 60000);
+
+  it("P8: managed enroll + inbound X-Bishop-Upstream-Key → 200 (header ignored, flow ok)", async () => {
+    await setMockMode(mock, "success");
+    const res = await worker.fetch("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${sharedToken}`,
+        "x-bishop-upstream-key": "should-be-ignored",
+      },
+      body: JSON.stringify({ model: "claude-haiku-4-5", stream: true }),
+    });
+    expect(res.status).toBe(200);
   }, 60000);
 });
