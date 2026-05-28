@@ -17,7 +17,7 @@
  */
 
 import type { Env } from "../index";
-import { rebuildHeaders } from "../lib/headers";
+import { rebuildHeaders, resolveUpstreamKey } from "../lib/headers";
 import { extractUsageFromSSE } from "../lib/sse-usage";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
@@ -225,8 +225,14 @@ export async function handleMessages(
     );
   }
 
-  // Step 6 — rebuild headers for upstream.
-  const upstreamHeaders = rebuildHeaders(request.headers, env.ANTHROPIC_API_KEY);
+  // Step 6 — BYOK entitlement gate: resolve upstream key (fail-closed).
+  const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
+  const keyResolution = resolveUpstreamKey(accountMode, request.headers, env.ANTHROPIC_API_KEY);
+  if (!keyResolution.ok) {
+    emitError(requestId, ip, requestSize, 400, "byok_key_missing", startedAt, tokenId);
+    return jsonError(400, "byok_key_missing");
+  }
+  const upstreamHeaders = rebuildHeaders(request.headers, keyResolution.key);
 
   // Step 7 — upstream fetch with G8 retry policy (one retry on 5xx).
   const upstreamUrl =

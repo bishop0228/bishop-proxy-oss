@@ -16,6 +16,21 @@ const FORWARD_ALLOWLIST = new Set<string>([
   "anthropic-beta",
 ]);
 
+export function resolveUpstreamKey(
+  accountMode: "managed" | "byok",
+  incoming: Headers,
+  operatorKey: string,
+): { ok: true; key: string } | { ok: false; reason: "byok_key_missing" } {
+  if (accountMode === "managed") {
+    return { ok: true, key: operatorKey };
+  }
+  const inbound = (incoming.get("x-bishop-upstream-key") ?? "").trim();
+  if (!inbound) {
+    return { ok: false, reason: "byok_key_missing" };
+  }
+  return { ok: true, key: inbound };
+}
+
 export function rebuildHeaders(incoming: Headers, anthropicKey: string): Headers {
   const out = new Headers();
   for (const [key, value] of incoming.entries()) {
