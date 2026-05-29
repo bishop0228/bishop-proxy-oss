@@ -112,6 +112,9 @@ export interface Env {
   // via _setAllowlistForTesting. Never set in production. Mirrors the MOCK_AI
   // pattern — present in the bundle but only activated in test deployments.
   BISHOP_TEST_OUTBOUND_HOSTS?: string;
+  // Test-only: override token TTL in ms for expired-verdict testing. Negative
+  // value produces a token already expired at issuance. Never set in production.
+  BISHOP_TEST_TOKEN_TTL_MS?: string;
 }
 
 export default {

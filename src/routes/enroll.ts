@@ -22,6 +22,7 @@ export interface EnrollEnv {
   AUTH_STORE: DurableObjectNamespace;
   TARGET_ZERO_BITS?: string;
   TARGET_MEMORY_KIB?: string;
+  BISHOP_TEST_TOKEN_TTL_MS?: string;
 }
 
 interface EnrollRequest {
@@ -173,10 +174,14 @@ export async function handleEnroll(
   }
 
   // 6. Issue or retrieve token from AuthStoreDO
+  const issueBody: Record<string, unknown> = { fingerprint_hash, client_version, account_mode };
+  if (env.BISHOP_TEST_TOKEN_TTL_MS !== undefined) {
+    issueBody.test_ttl_ms = parseInt(env.BISHOP_TEST_TOKEN_TTL_MS, 10);
+  }
   const issueResp = await stub.fetch("https://auth-store/issue", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ fingerprint_hash, client_version, account_mode }),
+    body: JSON.stringify(issueBody),
   });
   const record = (await issueResp.json()) as AuthRecord;
 
