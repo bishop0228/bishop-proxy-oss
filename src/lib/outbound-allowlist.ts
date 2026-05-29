@@ -1,10 +1,10 @@
 /**
  * Outbound fetch allowlist — no-exfiltration enforcement boundary.
  *
- * The allowlist is a
- * fixed constant — no extraHosts, no operator-configurable widening via
- * ANTHROPIC_BASE_URL. A misconfigured ANTHROPIC_BASE_URL fails closed on the
- * first request (AnthropicBaseUrlNotAllowed, HTTP 500), not silently.
+ * The allowlist is a fixed constant — no extraHosts, no operator-configurable
+ * widening via ANTHROPIC_BASE_URL. A misconfigured ANTHROPIC_BASE_URL fails
+ * closed on the first request (AnthropicBaseUrlNotAllowed, HTTP 500), not
+ * silently.
  *
  * This module enforces the claim: "Bishop's Worker only fetches
  * api.anthropic.com — there is no exfiltration surface." It patches
@@ -12,9 +12,16 @@
  * fetch against a non-allowlisted host fails closed at runtime, not in
  * production traffic.
  *
+ * §1.17.18 enterprise-host floor: ENTERPRISE_HOST_PATTERNS carries an anchored
+ * single-label regex for Azure OpenAI (<resource>.openai.azure.com). This is a
+ * floor-not-ceiling ADDED conjunct — the exact ALLOWED_OUTBOUND_HOSTS set is
+ * unchanged (length stays 26). The pattern is fully anchored, single DNS label,
+ * lowercase-only, no `i` flag, no .*, no unanchored alternation. Reviewed
+ * founder-approved 2026-05-29.
+ *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
- * explicit security review (floor-not-ceiling rule and defense-in-depth review
- * (defense-in-depth boundary). See README "Outbound fetch allowlist" section.
+ * explicit security review (floor-not-ceiling rule and defense-in-depth review).
+ * See README "Outbound fetch allowlist" section.
  */
 
 /** Single source of truth for permitted outbound hosts. Fixed — no runtime widening. */
@@ -50,6 +57,20 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // §1.17.17 enterprise BYOK — AWS Bedrock SigV4
   "bedrock-runtime.us-east-1.amazonaws.com",
 ] as const);
+
+/**
+ * §1.17.18 Azure single-label+suffix anchored pattern (founder-approved 2026-05-29;
+ * floor-not-ceiling preserved). Fully anchored, single DNS label, lowercase-only,
+ * no `i` flag, no .*, no unanchored alternation.
+ */
+export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openai\.azure\.com$/,
+];
+
+/** Returns true if host matches an anchored enterprise-host pattern. */
+export function isAnchoredEnterpriseHost(host: string): boolean {
+  return ENTERPRISE_HOST_PATTERNS.some((re) => re.test(host));
+}
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -101,7 +122,7 @@ export function installFetchAllowlist(): void {
     } catch {
       return Promise.reject(new OutboundHostNotAllowed(urlStr));
     }
-    if (!_allowedSet.has(host)) {
+    if (!_allowedSet.has(host) && !isAnchoredEnterpriseHost(host)) {
       return Promise.reject(new OutboundHostNotAllowed(host));
     }
     return prior(input, init);
