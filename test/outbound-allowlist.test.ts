@@ -1,10 +1,15 @@
 /**
- * Interceptor-level floor-change guards for §1.17.18 (ENTERPRISE_HOST_PATTERNS).
+ * Interceptor-level floor-change guards for §1.17.18/§1.17.19 (ENTERPRISE_HOST_PATTERNS).
  *
- * 3 guards:
+ * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
  *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 26 — exact set unchanged
+ *
+ * §1.17.19 Vertex guards:
+ *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
+ *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 26 unchanged (Vertex is floor pattern, not host add)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -13,6 +18,7 @@ import {
   _resetForTesting,
   ALLOWED_OUTBOUND_HOSTS,
   OutboundHostNotAllowed,
+  isAnchoredEnterpriseHost,
 } from "../src/lib/outbound-allowlist";
 
 type G = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
@@ -60,6 +66,23 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
   it("8c: ALLOWED_OUTBOUND_HOSTS.length === 26 — exact set unchanged", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(26);
+  });
+
+  // ── §1.17.19 Vertex AI floor guards ──────────────────────────────────────
+
+  it("9a: us-central1-aiplatform.googleapis.com accepted (Vertex floor pattern)", () => {
+    expect(isAnchoredEnterpriseHost("us-central1-aiplatform.googleapis.com")).toBe(true);
+  });
+
+  it("9b: suffix-spoof and oauth2.googleapis.com sibling rejected (floor not widened)", () => {
+    // Suffix-spoof: trailing attacker domain must not pass.
+    expect(isAnchoredEnterpriseHost("us-central1-aiplatform.googleapis.com.attacker.com")).toBe(false);
+    // Sibling service: proves floor did NOT widen to bare *.googleapis.com.
+    expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
+  });
+
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 26 — Vertex is a floor pattern, not a host add", () => {
     expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(26);
   });
 });
