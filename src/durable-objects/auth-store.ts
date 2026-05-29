@@ -51,6 +51,7 @@ export class AuthStoreDO {
         fingerprint_hash: string;
         client_version: string;
         account_mode?: string;
+        test_ttl_ms?: number;
       };
       const accountMode: "managed" | "byok" =
         body.account_mode === "byok" ? "byok" : "managed";
@@ -58,6 +59,7 @@ export class AuthStoreDO {
         body.fingerprint_hash,
         body.client_version,
         accountMode,
+        body.test_ttl_ms,
       );
       return new Response(JSON.stringify(record), {
         status: isNew ? 201 : 200,
@@ -188,6 +190,36 @@ export class AuthStoreDO {
       });
     }
 
+    if (request.method === "POST" && url.pathname === "/revoke") {
+      const body = (await request.json()) as { token_id?: string };
+      if (!body.token_id) {
+        return new Response(JSON.stringify({ error: "missing_token_id" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const token = await this.state.storage.get<string>(`tid:${body.token_id}`);
+      if (!token) {
+        return new Response(JSON.stringify({ revoked: false, existed: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      let revoked = false;
+      await this.state.storage.transaction(async (txn) => {
+        const rec = await txn.get<AuthRecord>(`token:${token}`);
+        if (rec) {
+          rec.status = "revoked";
+          await txn.put(`token:${token}`, rec);
+          revoked = true;
+        }
+      });
+      return new Response(JSON.stringify({ revoked, existed: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "not_found" }), {
       status: 404,
       headers: { "content-type": "application/json" },
@@ -204,6 +236,7 @@ export class AuthStoreDO {
     fingerprint_hash: string,
     client_version: string,
     account_mode: "managed" | "byok" = "managed",
+    test_ttl_ms?: number,
   ): Promise<{ record: AuthRecord; isNew: boolean }> {
     // Pre-transaction idempotency check
     const existing = await this._lookupByFingerprint(fingerprint_hash);
@@ -214,7 +247,11 @@ export class AuthStoreDO {
     const token = `bsk_staging_${toBase64url(tokenBytes)}`;
     const token_id = crypto.randomUUID();
     const now = new Date();
-    const expires = new Date(now.getTime() + 365 * 24 * 3600 * 1000);
+    const ttlMs =
+      typeof test_ttl_ms === "number" && Number.isFinite(test_ttl_ms)
+        ? test_ttl_ms
+        : 365 * 24 * 3600 * 1000;
+    const expires = new Date(now.getTime() + ttlMs);
 
     const candidate: AuthRecord = {
       token,
@@ -236,6 +273,7 @@ export class AuthStoreDO {
       if (!existingToken) {
         await txn.put(`token:${token}`, candidate);
         await txn.put(`fp:${fingerprint_hash}`, token);
+        await txn.put(`tid:${token_id}`, token); // §1.17.20 reverse index → enables revoke-by-token_id
       }
     });
 
