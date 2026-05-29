@@ -47,6 +47,8 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "chat.qwen.ai",
   "portal.nousresearch.com",
   // api.x.ai + dashscope-intl.aliyuncs.com already present above; api.github.com OMITTED (secondary Copilot token mint is daemon-side)
+  // §1.17.17 enterprise BYOK — AWS Bedrock SigV4
+  "bedrock-runtime.us-east-1.amazonaws.com",
 ] as const);
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

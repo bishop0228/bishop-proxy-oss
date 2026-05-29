@@ -209,7 +209,7 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(Object.isFrozen(ALLOWED_OUTBOUND_HOSTS)).toBe(true);
   });
 
-  it("contains all expected base hosts, §1.17.15 BYOK upstream vendors, and §1.17.16 OAuth upstreams", () => {
+  it("contains all expected base hosts, §1.17.15 BYOK upstream vendors, §1.17.16 OAuth upstreams, and §1.17.17 Bedrock", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.anthropic.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.openai.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.x.ai");
@@ -237,7 +237,9 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.githubcopilot.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("chat.qwen.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("portal.nousresearch.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(25);
+    // §1.17.17 enterprise BYOK — AWS Bedrock SigV4
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("bedrock-runtime.us-east-1.amazonaws.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(26);
   });
 });
 

@@ -31,6 +31,7 @@ import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
 import { handleByok } from "./routes/byok";
+import { handleBedrock } from "./routes/bedrock";
 import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
 import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 
@@ -86,6 +87,8 @@ export interface Env {
   QWEN_ALIBABA_COMPLETION_BASE_URL?: string;
   NOUS_PORTAL_TOKEN_BASE_URL?: string;
   NOUS_PORTAL_COMPLETION_BASE_URL?: string;
+  // §1.17.17 AWS Bedrock SigV4 BYOK leg base-URL override (test seam)
+  BEDROCK_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -192,6 +195,9 @@ export default {
       });
     }
 
+    if (request.method === "POST" && url.pathname.startsWith("/byok/bedrock/")) {
+      return handleBedrock(request, env, ctx);
+    }
     if (request.method === "POST" && url.pathname.startsWith("/byok/")) {
       return handleByok(request, env, ctx);
     }
