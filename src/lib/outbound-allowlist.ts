@@ -18,7 +18,27 @@
  */
 
 /** Single source of truth for permitted outbound hosts. Fixed — no runtime widening. */
-export const ALLOWED_OUTBOUND_HOSTS = Object.freeze(["api.anthropic.com", "api.openai.com", "api.x.ai", "dashscope-intl.aliyuncs.com", "generativelanguage.googleapis.com"] as const);
+export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
+  "api.anthropic.com",
+  "api.openai.com",
+  "api.x.ai",
+  "dashscope-intl.aliyuncs.com",
+  "generativelanguage.googleapis.com",
+  // §1.17.15 BYOK upstream vendors — see docs/PROVIDER_MATRIX.md §4
+  "ai.vercel.com",
+  "api.cohere.ai",
+  "api.deepseek.com",
+  "api.fireworks.ai",
+  "api.groq.com",
+  "api.minimax.chat",
+  "api.mistral.ai",
+  "api.moonshot.cn",
+  "api.perplexity.ai",
+  "api.together.xyz",
+  "open.bigmodel.cn",
+  "openrouter.ai",
+  "router.huggingface.co",
+] as const);
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

@@ -209,13 +209,27 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(Object.isFrozen(ALLOWED_OUTBOUND_HOSTS)).toBe(true);
   });
 
-  it("contains api.anthropic.com, api.openai.com, api.x.ai, dashscope-intl.aliyuncs.com, and generativelanguage.googleapis.com", () => {
+  it("contains all expected base hosts and §1.17.15 BYOK upstream vendors", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.anthropic.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.openai.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.x.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("dashscope-intl.aliyuncs.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("generativelanguage.googleapis.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(5);
+    // §1.17.15 BYOK upstream vendors
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("ai.vercel.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.cohere.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.deepseek.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.fireworks.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.groq.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.minimax.chat");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.mistral.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.moonshot.cn");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.perplexity.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.together.xyz");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("open.bigmodel.cn");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("openrouter.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("router.huggingface.co");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(18);
   });
 });
 

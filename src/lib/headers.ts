@@ -78,3 +78,22 @@ export function rebuildOpenAIHeaders(incoming: Headers, openaiKey: string): Head
   if (!out.has("content-type")) out.set("content-type", "application/json");
   return out;
 }
+
+/**
+ * Request header rebuild for /byok/ upstream calls.
+ *
+ * Strip-all like rebuildOpenAIHeaders: only content-type is forwarded from the
+ * inbound request. All 14 BYOK legs use Bearer auth.
+ *
+ * All client identifiers (inbound authorization, x-bishop-upstream-key,
+ * user-agent, x-forwarded-for) are dropped — Pillar 1 identifier-strip.
+ */
+export function rebuildByokHeaders(incoming: Headers, key: string): Headers {
+  const out = new Headers();
+  for (const [k, v] of incoming.entries()) {
+    if (k.toLowerCase() === "content-type") out.set(k, v);
+  }
+  out.set("authorization", `Bearer ${key}`);
+  if (!out.has("content-type")) out.set("content-type", "application/json");
+  return out;
+}

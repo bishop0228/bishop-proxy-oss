@@ -30,6 +30,7 @@ import { handleGemini } from "./routes/gemini";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
+import { handleByok } from "./routes/byok";
 
 export interface Env {
   TIER_CACHE: DurableObjectNamespace;
@@ -46,6 +47,32 @@ export interface Env {
   QWEN_BASE_URL?: string;
   GEMINI_API_KEY?: string;
   GEMINI_BASE_URL?: string;
+  MISTRAL_API_KEY?: string;
+  MISTRAL_BASE_URL?: string;
+  DEEPSEEK_API_KEY?: string;
+  DEEPSEEK_BASE_URL?: string;
+  MINIMAX_API_KEY?: string;
+  MINIMAX_BASE_URL?: string;
+  ZHIPU_API_KEY?: string;
+  ZHIPU_BASE_URL?: string;
+  PERPLEXITY_API_KEY?: string;
+  PERPLEXITY_BASE_URL?: string;
+  COHERE_API_KEY?: string;
+  COHERE_BASE_URL?: string;
+  MOONSHOT_API_KEY?: string;
+  MOONSHOT_BASE_URL?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_BASE_URL?: string;
+  VERCEL_API_KEY?: string;
+  VERCEL_BASE_URL?: string;
+  HUGGINGFACE_API_KEY?: string;
+  HUGGINGFACE_BASE_URL?: string;
+  GROQ_API_KEY?: string;
+  GROQ_BASE_URL?: string;
+  TOGETHER_API_KEY?: string;
+  TOGETHER_BASE_URL?: string;
+  FIREWORKS_API_KEY?: string;
+  FIREWORKS_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -150,6 +177,10 @@ export default {
         status: 200,
         headers: { "content-type": "application/json" },
       });
+    }
+
+    if (request.method === "POST" && url.pathname.startsWith("/byok/")) {
+      return handleByok(request, env, ctx);
     }
 
     return new Response(JSON.stringify({ error: "not_found", path: url.pathname }), {
