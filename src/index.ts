@@ -24,6 +24,7 @@ import { handleChallenge } from "./routes/challenge";
 import { handleEnroll } from "./routes/enroll";
 import { handleMessages } from "./routes/messages";
 import { handleChatCompletions } from "./routes/chat-completions";
+import { handleGrok } from "./routes/grok";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -37,6 +38,8 @@ export interface Env {
   ANTHROPIC_API_KEY: string;
   OPENAI_API_KEY?: string;
   OPENAI_BASE_URL?: string;
+  XAI_API_KEY?: string;
+  XAI_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -120,6 +123,9 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/chat/completions") {
       return handleChatCompletions(request, env, ctx);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/grok/chat/completions") {
+      return handleGrok(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
       return handleTierBind(request, env);
