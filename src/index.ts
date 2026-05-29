@@ -26,6 +26,7 @@ import { handleMessages } from "./routes/messages";
 import { handleChatCompletions } from "./routes/chat-completions";
 import { handleGrok } from "./routes/grok";
 import { handleQwen } from "./routes/qwen";
+import { handleGemini } from "./routes/gemini";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -43,6 +44,8 @@ export interface Env {
   XAI_BASE_URL?: string;
   QWEN_API_KEY?: string;
   QWEN_BASE_URL?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -132,6 +135,9 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/qwen/chat/completions") {
       return handleQwen(request, env, ctx);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/gemini/chat/completions") {
+      return handleGemini(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
       return handleTierBind(request, env);

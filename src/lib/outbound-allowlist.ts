@@ -18,7 +18,7 @@
  */
 
 /** Single source of truth for permitted outbound hosts. Fixed — no runtime widening. */
-export const ALLOWED_OUTBOUND_HOSTS = Object.freeze(["api.anthropic.com", "api.openai.com", "api.x.ai", "dashscope-intl.aliyuncs.com"] as const);
+export const ALLOWED_OUTBOUND_HOSTS = Object.freeze(["api.anthropic.com", "api.openai.com", "api.x.ai", "dashscope-intl.aliyuncs.com", "generativelanguage.googleapis.com"] as const);
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
