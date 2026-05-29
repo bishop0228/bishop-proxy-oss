@@ -196,7 +196,7 @@ export async function handleAzure(
     emitError(requestId, ip, requestSize, 400, "byok_key_missing", startedAt, tokenId);
     return jsonError(400, "byok_key_missing");
   }
-  const resource = upstreamKeyRaw.slice(0, colonIdx);
+  const resource = upstreamKeyRaw.slice(0, colonIdx).toLowerCase();
   const apiKey = upstreamKeyRaw.slice(colonIdx + 1);
 
   // SSRF defence: server-side host construct + anchored single-label validation.
