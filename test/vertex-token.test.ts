@@ -11,7 +11,7 @@
  *   (7) upstream host: fetch targets VERTEX_TOKEN_BASE_URL/token (server-constructed URL)
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
 import { handleVertexToken } from "../src/routes/vertex-token";
@@ -234,8 +234,10 @@ describe("Vertex token-mint leg (/byok/vertex/token)", () => {
       await r.json();
     }
 
-    // Use distinct fingerprints: "3" = byok for this test suite.
-    byokToken = await enroll(worker, "3".repeat(64), "byok");
+    // Use distinct fingerprints: "4" = byok for this test suite.
+    // ("3" is reserved for openai-leg.test.ts managed token; sharing fingerprint
+    // causes idempotent DO re-enrollment to return the wrong account_mode.)
+    byokToken = await enroll(worker, "4".repeat(64), "byok");
   }, 60000);
 
   afterAll(async () => {
@@ -245,6 +247,10 @@ describe("Vertex token-mint leg (/byok/vertex/token)", () => {
 
   beforeEach(async () => {
     await mock.fetch(mockUrl + "/__reset", { method: "POST" });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   // ── Probe 1: missing_bearer → 401 ────────────────────────────────────────
