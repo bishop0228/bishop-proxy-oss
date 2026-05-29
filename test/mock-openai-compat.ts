@@ -1,11 +1,12 @@
 /**
- * Mock OpenAI-compatible upstream for non-openai-legs.test.ts.
+ * Mock OpenAI-compatible upstream for non-openai-legs.test.ts and byok-legs.test.ts.
  *
  * Records the inbound Authorization header so probes can assert the proxy
- * forwarded the operator key and did not leak the client credential.
+ * forwarded the correct operator key and did not leak client credentials.
  *
- *   POST /v1/chat/completions  — grok + qwen upstream path
+ *   POST /v1/chat/completions  — grok + qwen + most byok upstream paths
  *   POST /chat/completions     — gemini upstream path
+ *   POST <any other path>      — byok legs with non-standard paths (minimax, groq, etc.)
  *   GET  /__last_auth          — { auth: string | null }
  *   POST /__reset              — clear lastAuth
  */
@@ -31,10 +32,7 @@ export default {
       });
     }
 
-    if (
-      request.method === "POST" &&
-      (url.pathname === "/v1/chat/completions" || url.pathname === "/chat/completions")
-    ) {
+    if (request.method === "POST") {
       lastAuth = request.headers.get("authorization");
       const body = {
         id: "chatcmpl-mock",
