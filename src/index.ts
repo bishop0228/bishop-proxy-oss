@@ -30,6 +30,7 @@ import { handleGemini } from "./routes/gemini";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
+import { handleAdminTokenRevoke } from "./routes/admin-token-revoke";
 import { handleByok } from "./routes/byok";
 import { handleBedrock } from "./routes/bedrock";
 import { handleAzure } from "./routes/azure";
@@ -162,6 +163,9 @@ export default {
     // Admin routes — registered before public routes to prevent shadowing.
     if (request.method === "POST" && url.pathname === "/admin/rate-limit/clear") {
       return handleAdminRateLimitClear(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/admin/token/revoke") {
+      return handleAdminTokenRevoke(request, env);
     }
 
     if (request.method === "GET" && url.pathname === "/v1/tier") {
