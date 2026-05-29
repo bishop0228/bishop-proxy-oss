@@ -209,7 +209,7 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(Object.isFrozen(ALLOWED_OUTBOUND_HOSTS)).toBe(true);
   });
 
-  it("contains all expected base hosts and §1.17.15 BYOK upstream vendors", () => {
+  it("contains all expected base hosts, §1.17.15 BYOK upstream vendors, and §1.17.16 OAuth upstreams", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.anthropic.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.openai.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.x.ai");
@@ -229,7 +229,15 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("open.bigmodel.cn");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("openrouter.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("router.huggingface.co");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(18);
+    // §1.17.16 OAuth subscription upstreams
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("auth.openai.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("chatgpt.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("accounts.x.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("github.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.githubcopilot.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("chat.qwen.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("portal.nousresearch.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(25);
   });
 });
 
