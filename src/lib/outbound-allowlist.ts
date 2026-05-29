@@ -38,6 +38,15 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "open.bigmodel.cn",
   "openrouter.ai",
   "router.huggingface.co",
+  // §1.17.16 OAuth subscription upstreams
+  "auth.openai.com",
+  "chatgpt.com",
+  "accounts.x.ai",
+  "github.com",
+  "api.githubcopilot.com",
+  "chat.qwen.ai",
+  "portal.nousresearch.com",
+  // api.x.ai + dashscope-intl.aliyuncs.com already present above; api.github.com OMITTED (secondary Copilot token mint is daemon-side)
 ] as const);
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;

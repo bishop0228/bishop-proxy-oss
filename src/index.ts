@@ -31,6 +31,8 @@ import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
 import { handleByok } from "./routes/byok";
+import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
+import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 
 export interface Env {
   TIER_CACHE: DurableObjectNamespace;
@@ -73,6 +75,17 @@ export interface Env {
   TOGETHER_BASE_URL?: string;
   FIREWORKS_API_KEY?: string;
   FIREWORKS_BASE_URL?: string;
+  // §1.17.16 OAuth subscription leg base-URL overrides (test seam)
+  OPENAI_CODEX_TOKEN_BASE_URL?: string;
+  OPENAI_CODEX_COMPLETION_BASE_URL?: string;
+  XAI_GROK_TOKEN_BASE_URL?: string;
+  XAI_GROK_COMPLETION_BASE_URL?: string;
+  GITHUB_COPILOT_TOKEN_BASE_URL?: string;
+  GITHUB_COPILOT_COMPLETION_BASE_URL?: string;
+  QWEN_ALIBABA_TOKEN_BASE_URL?: string;
+  QWEN_ALIBABA_COMPLETION_BASE_URL?: string;
+  NOUS_PORTAL_TOKEN_BASE_URL?: string;
+  NOUS_PORTAL_COMPLETION_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -181,6 +194,14 @@ export default {
 
     if (request.method === "POST" && url.pathname.startsWith("/byok/")) {
       return handleByok(request, env, ctx);
+    }
+
+    if (request.method === "POST" && url.pathname.startsWith("/oauth/")) {
+      return handleOAuthToken(request, env, ctx);
+    }
+    if (request.method === "POST" && url.pathname.startsWith("/v1/")
+        && OAUTH_UPSTREAM_SPECS[url.pathname.split("/")[2] ?? ""]) {
+      return handleOAuthCompletion(request, env, ctx);
     }
 
     return new Response(JSON.stringify({ error: "not_found", path: url.pathname }), {
