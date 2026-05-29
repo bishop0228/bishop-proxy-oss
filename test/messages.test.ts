@@ -128,7 +128,8 @@ describe("POST /v1/messages", () => {
 
   beforeAll(async () => {
     mock = await unstable_dev("test/mock-anthropic.ts", {
-      experimental: { disableExperimentalWarning: true },
+      config: "test/wrangler.mock.toml",
+      experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
       persist: false,
     });
     const mockUrl = `http://${mock.address}:${mock.port}`;

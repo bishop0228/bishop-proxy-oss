@@ -209,9 +209,10 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(Object.isFrozen(ALLOWED_OUTBOUND_HOSTS)).toBe(true);
   });
 
-  it("contains api.anthropic.com and nothing else", () => {
+  it("contains api.anthropic.com and api.openai.com", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.anthropic.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(1);
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.openai.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(2);
   });
 });
 
