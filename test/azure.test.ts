@@ -410,6 +410,23 @@ describe("Azure BYOK leg (/byok/azure/...)", () => {
     expect(searchResp.search).toContain("api-version=2024-02-01");
   }, 30000);
 
+  // ── Probe 4b (regression W38-S672): mixed-case resource normalized ────
+  it("byok: mixed-case resource is lowercased and reaches upstream (not 400)", async () => {
+    const res = await worker.fetch("/byok/azure/openai/deployments/gpt-4/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": `MyResource:${TEST_API_KEY}`,
+      },
+      body: TEST_BODY,
+    });
+    expect(res.status).toBe(200);
+    const lastApiKeyRes = await mock.fetch(mockUrl + "/__last_apikey");
+    const { apiKey } = (await lastApiKeyRes.json()) as { apiKey: string | null };
+    expect(apiKey).toBe(TEST_API_KEY);
+  }, 30000);
+
   // ── Probe 5: classify-block → 451; Azure upstream NOT called (unit) ───
 
   it("classify block: 451 content_policy_violation; Azure upstream NOT called", async () => {
