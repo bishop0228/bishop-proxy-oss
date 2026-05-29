@@ -209,11 +209,12 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(Object.isFrozen(ALLOWED_OUTBOUND_HOSTS)).toBe(true);
   });
 
-  it("contains api.anthropic.com, api.openai.com, and api.x.ai", () => {
+  it("contains api.anthropic.com, api.openai.com, api.x.ai, and dashscope-intl.aliyuncs.com", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.anthropic.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.openai.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.x.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(3);
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("dashscope-intl.aliyuncs.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(4);
   });
 });
 
