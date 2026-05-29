@@ -61,16 +61,16 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     baseUrlVar: "PERPLEXITY_BASE_URL",
   },
 
-  // cohere — Cohere. // SECURITY-REVIEW: [SR] .ai TLD; operator accepts Cohere data-processing terms.
+  // cohere — Cohere. Host api.cohere.com (official current domain; .ai is a legacy alias). Operator accepts Cohere data-processing terms.
   cohere: {
-    upstreamHost: "api.cohere.ai",
+    upstreamHost: "api.cohere.com",
     operatorKeyVar: "COHERE_API_KEY",
     baseUrlVar: "COHERE_BASE_URL",
   },
 
-  // moonshot — Moonshot AI (Kimi). // SECURITY-REVIEW: [SR] .cn TLD; data-residency policy applies.
+  // moonshot — Moonshot AI (Kimi). Host api.moonshot.ai (international platform default; .cn is the China-region endpoint and 401s for intl keys).
   moonshot: {
-    upstreamHost: "api.moonshot.cn",
+    upstreamHost: "api.moonshot.ai",
     operatorKeyVar: "MOONSHOT_API_KEY",
     baseUrlVar: "MOONSHOT_BASE_URL",
   },
@@ -82,9 +82,9 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     baseUrlVar: "OPENROUTER_BASE_URL",
   },
 
-  // vercel — Vercel AI Gateway. // SECURITY-REVIEW: [SR] host ai.vercel.com inferred; verify against §2.1 table before production deploy.
+  // vercel — Vercel AI Gateway. Host ai-gateway.vercel.sh (OpenAI-compatible base ai-gateway.vercel.sh/v1, vendor-confirmed).
   vercel: {
-    upstreamHost: "ai.vercel.com",
+    upstreamHost: "ai-gateway.vercel.sh",
     operatorKeyVar: "VERCEL_API_KEY",
     baseUrlVar: "VERCEL_BASE_URL",
   },

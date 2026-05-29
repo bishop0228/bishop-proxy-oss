@@ -216,14 +216,14 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("dashscope-intl.aliyuncs.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("generativelanguage.googleapis.com");
     // §1.17.15 BYOK upstream vendors
-    expect(ALLOWED_OUTBOUND_HOSTS).toContain("ai.vercel.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.cohere.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("ai-gateway.vercel.sh");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.cohere.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.deepseek.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.fireworks.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.groq.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.minimax.chat");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.mistral.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.moonshot.cn");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.moonshot.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.perplexity.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.together.xyz");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("open.bigmodel.cn");
