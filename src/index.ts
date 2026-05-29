@@ -34,6 +34,7 @@ import { handleByok } from "./routes/byok";
 import { handleBedrock } from "./routes/bedrock";
 import { handleAzure } from "./routes/azure";
 import { handleVertex } from "./routes/vertex";
+import { handleVertexToken } from "./routes/vertex-token";
 import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
 import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 
@@ -95,6 +96,8 @@ export interface Env {
   AZURE_BASE_URL?: string;
   // §1.17.19 Google Vertex AI BYOK leg base-URL override (test seam)
   VERTEX_BASE_URL?: string;
+  // §1.17.19 Vertex SA-token mint leg base-URL override (test seam)
+  VERTEX_TOKEN_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -206,6 +209,9 @@ export default {
     }
     if (request.method === "POST" && url.pathname.startsWith("/byok/azure/")) {
       return handleAzure(request, env, ctx);
+    }
+    if (request.method === "POST" && url.pathname === "/byok/vertex/token") {
+      return handleVertexToken(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname.startsWith("/byok/vertex/")) {
       return handleVertex(request, env, ctx);
