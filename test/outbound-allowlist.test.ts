@@ -4,12 +4,12 @@
  * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
- *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 26 — exact set unchanged
+ *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com
  *
  * §1.17.19 Vertex guards:
  *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
  *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
- *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 26 unchanged (Vertex is floor pattern, not host add)
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com (exact-match)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -65,8 +65,12 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 26 — exact set unchanged", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(26);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(27);
+  });
+
+  it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("oauth2.googleapis.com");
   });
 
   // ── §1.17.19 Vertex AI floor guards ──────────────────────────────────────
@@ -82,7 +86,7 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 26 — Vertex is a floor pattern, not a host add", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(26);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(27);
   });
 });

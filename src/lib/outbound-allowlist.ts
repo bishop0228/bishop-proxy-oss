@@ -15,9 +15,11 @@
  * §1.17.18/§1.17.19 enterprise-host floor: ENTERPRISE_HOST_PATTERNS carries anchored
  * single-label regexes for Azure OpenAI (<resource>.openai.azure.com) and Vertex AI
  * (<region>-aiplatform.googleapis.com). This is a floor-not-ceiling ADDED conjunct —
- * the exact ALLOWED_OUTBOUND_HOSTS set is unchanged (length stays 26). Each pattern
- * is fully anchored, single DNS label, lowercase-only, no `i` flag, no .*, no
- * unanchored alternation. Reviewed founder-approved 2026-05-29.
+ * the exact ALLOWED_OUTBOUND_HOSTS set is unchanged (length stays 26) for completion
+ * legs; §1.17.19 adds exactly one exact-match host (oauth2.googleapis.com, length now
+ * 27) for the SA-token mint leg — the aiplatform/azure wildcards remain floor patterns.
+ * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
+ * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29.
  *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
@@ -56,6 +58,8 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // api.x.ai + dashscope-intl.aliyuncs.com already present above; api.github.com OMITTED (secondary Copilot token mint is daemon-side)
   // §1.17.17 enterprise BYOK — AWS Bedrock SigV4
   "bedrock-runtime.us-east-1.amazonaws.com",
+  // §1.17.19 Vertex SA-token mint — Google OAuth2 token endpoint
+  "oauth2.googleapis.com",
 ] as const);
 
 /**
