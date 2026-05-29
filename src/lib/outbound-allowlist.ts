@@ -12,12 +12,12 @@
  * fetch against a non-allowlisted host fails closed at runtime, not in
  * production traffic.
  *
- * §1.17.18 enterprise-host floor: ENTERPRISE_HOST_PATTERNS carries an anchored
- * single-label regex for Azure OpenAI (<resource>.openai.azure.com). This is a
- * floor-not-ceiling ADDED conjunct — the exact ALLOWED_OUTBOUND_HOSTS set is
- * unchanged (length stays 26). The pattern is fully anchored, single DNS label,
- * lowercase-only, no `i` flag, no .*, no unanchored alternation. Reviewed
- * founder-approved 2026-05-29.
+ * §1.17.18/§1.17.19 enterprise-host floor: ENTERPRISE_HOST_PATTERNS carries anchored
+ * single-label regexes for Azure OpenAI (<resource>.openai.azure.com) and Vertex AI
+ * (<region>-aiplatform.googleapis.com). This is a floor-not-ceiling ADDED conjunct —
+ * the exact ALLOWED_OUTBOUND_HOSTS set is unchanged (length stays 26). Each pattern
+ * is fully anchored, single DNS label, lowercase-only, no `i` flag, no .*, no
+ * unanchored alternation. Reviewed founder-approved 2026-05-29.
  *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
@@ -59,12 +59,13 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
 ] as const);
 
 /**
- * §1.17.18 Azure single-label+suffix anchored pattern (founder-approved 2026-05-29;
- * floor-not-ceiling preserved). Fully anchored, single DNS label, lowercase-only,
- * no `i` flag, no .*, no unanchored alternation.
+ * §1.17.18/§1.17.19 enterprise anchored patterns (founder-approved 2026-05-29;
+ * floor-not-ceiling preserved). Each is fully anchored, single DNS label,
+ * lowercase-only, no `i` flag, no .*, no unanchored alternation.
  */
 export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openai\.azure\.com$/,
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-aiplatform\.googleapis\.com$/,
 ];
 
 /** Returns true if host matches an anchored enterprise-host pattern. */
