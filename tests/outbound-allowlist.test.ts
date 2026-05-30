@@ -241,7 +241,7 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("bedrock-runtime.us-east-1.amazonaws.com");
     // §1.17.19 Vertex SA-token mint — Google OAuth2 token endpoint
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("oauth2.googleapis.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(27);
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(32);
   });
 });
 

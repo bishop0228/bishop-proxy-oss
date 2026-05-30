@@ -1,27 +1,42 @@
 /**
- * Interceptor-level floor-change guards for §1.17.18/§1.17.19 (ENTERPRISE_HOST_PATTERNS).
+ * Interceptor-level floor-change guards for §1.17.18/§1.17.19 (ENTERPRISE_HOST_PATTERNS)
+ * and §H-DYNAMIC 2026-05-30 (5 new BYOK upstream hosts, length 27→32).
  *
  * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
- *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com
+ *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 32 — §H-DYNAMIC adds 5 BYOK hosts
  *
  * §1.17.19 Vertex guards:
  *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
  *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
- *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com (exact-match)
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 32 — §H-DYNAMIC adds 5 BYOK hosts
+ *
+ * §H-DYNAMIC BYOK expansion guards (founder-signed-off 2026-05-30):
+ *   (10a) Each of 5 new hosts is in ALLOWED_OUTBOUND_HOSTS
+ *   (10b) Attacker-variant of each new host rejected (suffix-spoof still blocked)
+ *   (10c) Drop-a-host mutation: _setAllowlistForTesting without the host → request blocked
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   installFetchAllowlist,
   _resetForTesting,
+  _setAllowlistForTesting,
   ALLOWED_OUTBOUND_HOSTS,
   OutboundHostNotAllowed,
   isAnchoredEnterpriseHost,
 } from "../src/lib/outbound-allowlist";
 
 type G = { fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> };
+
+const NEW_BYOK_HOSTS = [
+  "api.cerebras.ai",
+  "integrate.api.nvidia.com",
+  "gateway.ai.cloudflare.com",
+  "api.hunyuan.cloud.tencent.com",
+  "ark.cn-beijing.volces.com",
+] as const;
 
 describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
   const originalFetch = (globalThis as unknown as G).fetch;
@@ -65,8 +80,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(27);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 32 — §H-DYNAMIC adds 5 BYOK hosts (27→32)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(32);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -86,7 +101,53 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 27 — §1.17.19 adds oauth2.googleapis.com (exact-match)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(27);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 32 — §H-DYNAMIC adds 5 BYOK hosts (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(32);
   });
+});
+
+describe("outbound-allowlist: §H-DYNAMIC BYOK expansion guards (2026-05-30)", () => {
+  const originalFetch = (globalThis as unknown as G).fetch;
+
+  beforeEach(() => {
+    _resetForTesting();
+  });
+
+  afterEach(() => {
+    _resetForTesting();
+    (globalThis as unknown as G).fetch = originalFetch;
+  });
+
+  // ── Guard 10a — each new host is allowlisted ──────────────────────────────
+
+  for (const host of NEW_BYOK_HOSTS) {
+    it(`10a: ${host} is in ALLOWED_OUTBOUND_HOSTS`, () => {
+      expect(ALLOWED_OUTBOUND_HOSTS).toContain(host);
+    });
+  }
+
+  // ── Guard 10b — attacker-variant of each new host rejected ───────────────
+
+  for (const host of NEW_BYOK_HOSTS) {
+    it(`10b: ${host}.attacker.com suffix-spoof rejected`, async () => {
+      installFetchAllowlist();
+      await expect(
+        (globalThis as unknown as G).fetch(`https://${host}.attacker.com/steal`),
+      ).rejects.toThrow(OutboundHostNotAllowed);
+    });
+  }
+
+  // ── Guard 10c — drop-a-host mutation: request blocked without the host ───
+
+  for (const host of NEW_BYOK_HOSTS) {
+    it(`10c: drop ${host} from allowlist → fetch to that host blocked`, async () => {
+      // Build allowlist without the target host
+      const truncated = (ALLOWED_OUTBOUND_HOSTS as readonly string[]).filter((h) => h !== host);
+      _setAllowlistForTesting(truncated);
+      installFetchAllowlist();
+      await expect(
+        (globalThis as unknown as G).fetch(`https://${host}/v1/chat/completions`),
+      ).rejects.toThrow(OutboundHostNotAllowed);
+    });
+  }
 });

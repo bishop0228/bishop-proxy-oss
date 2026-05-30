@@ -116,4 +116,40 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     operatorKeyVar: "FIREWORKS_API_KEY",
     baseUrlVar: "FIREWORKS_BASE_URL",
   },
+
+  // §H-DYNAMIC 2026-05-30 — OpenClaw-parity expansion (founder-signed-off)
+  // cerebras — Cerebras Inference (fast LLM inference).
+  cerebras: {
+    upstreamHost: "api.cerebras.ai",
+    operatorKeyVar: "CEREBRAS_API_KEY",
+    baseUrlVar: "CEREBRAS_BASE_URL",
+  },
+
+  // cloudflare — Cloudflare AI Gateway.
+  cloudflare: {
+    upstreamHost: "gateway.ai.cloudflare.com",
+    operatorKeyVar: "CLOUDFLARE_AI_API_KEY",
+    baseUrlVar: "CLOUDFLARE_AI_BASE_URL",
+  },
+
+  // nvidia — NVIDIA NIM.
+  nvidia: {
+    upstreamHost: "integrate.api.nvidia.com",
+    operatorKeyVar: "NVIDIA_API_KEY",
+    baseUrlVar: "NVIDIA_BASE_URL",
+  },
+
+  // tencent — Tencent Hunyuan. // SECURITY-REVIEW: [SR] China-based; data-residency policy applies.
+  tencent: {
+    upstreamHost: "api.hunyuan.cloud.tencent.com",
+    operatorKeyVar: "TENCENT_HUNYUAN_API_KEY",
+    baseUrlVar: "TENCENT_HUNYUAN_BASE_URL",
+  },
+
+  // volcengine — Volcengine Ark (ByteDance Doubao). // SECURITY-REVIEW: [SR] China-based; data-residency policy applies.
+  volcengine: {
+    upstreamHost: "ark.cn-beijing.volces.com",
+    operatorKeyVar: "VOLCENGINE_ARK_API_KEY",
+    baseUrlVar: "VOLCENGINE_ARK_BASE_URL",
+  },
 });

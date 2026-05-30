@@ -15,11 +15,12 @@
  * §1.17.18/§1.17.19 enterprise-host floor: ENTERPRISE_HOST_PATTERNS carries anchored
  * single-label regexes for Azure OpenAI (<resource>.openai.azure.com) and Vertex AI
  * (<region>-aiplatform.googleapis.com). This is a floor-not-ceiling ADDED conjunct —
- * the exact ALLOWED_OUTBOUND_HOSTS set is unchanged (length stays 26) for completion
- * legs; §1.17.19 adds exactly one exact-match host (oauth2.googleapis.com, length now
- * 27) for the SA-token mint leg — the aiplatform/azure wildcards remain floor patterns.
+ * completion legs: §1.17.19 added oauth2.googleapis.com (length→27); §H-DYNAMIC
+ * (2026-05-30, founder-signed-off) adds 5 BYOK upstreams (length→32): api.cerebras.ai,
+ * integrate.api.nvidia.com, gateway.ai.cloudflare.com, api.hunyuan.cloud.tencent.com,
+ * ark.cn-beijing.volces.com. Ollama (local) NOT added — no proxy egress.
  * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
- * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29.
+ * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29/2026-05-30.
  *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
@@ -60,6 +61,12 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "bedrock-runtime.us-east-1.amazonaws.com",
   // §1.17.19 Vertex SA-token mint — Google OAuth2 token endpoint
   "oauth2.googleapis.com",
+  // §H-DYNAMIC 2026-05-30 — OpenClaw-parity BYOK upstreams (founder-signed-off)
+  "api.cerebras.ai",
+  "integrate.api.nvidia.com",
+  "gateway.ai.cloudflare.com",
+  "api.hunyuan.cloud.tencent.com",
+  "ark.cn-beijing.volces.com",
 ] as const);
 
 /**

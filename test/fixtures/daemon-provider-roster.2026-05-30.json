@@ -1,11 +1,13 @@
 {
-  "_note": "Daemon provider universe snapshot. Generated from health.py:802 universe = _MODEL_OAUTH_PROVIDERS | set(byok_provider_registry.list_wired_providers()) | {'claude','openai','gemini'}. Refresh cadence: quarterly and before each major launch. Bidirectional live drift detection (daemon-side fixture freshness check) folds into §H-DYNAMIC.",
+  "_note": "Daemon provider universe snapshot. Generated from health.py:802 universe = _MODEL_OAUTH_PROVIDERS | set(byok_provider_registry.list_wired_providers()) | {'claude','openai','gemini'}. Refresh cadence: quarterly and before each major launch. Bidirectional live drift detection (daemon-side fixture freshness check) in tests/test_byok_openclaw_parity.py.",
   "generated_from": "daemon/src/health.py:802",
   "snapshot_date": "2026-05-30",
   "refresh_cadence": "quarterly + before each major launch",
   "byok_providers": [
     "azure_openai",
     "bedrock",
+    "cerebras",
+    "cloudflare_ai_gateway",
     "cohere",
     "deepseek",
     "fireworks",
@@ -17,12 +19,16 @@
     "minimax",
     "mistral",
     "moonshot_kimi",
+    "nvidia_nim",
+    "ollama",
     "openrouter",
     "perplexity",
+    "tencent_hunyuan",
     "together",
     "vercel_ai_gateway",
     "vertex",
     "vllm",
+    "volcengine_ark",
     "zhipu_glm"
   ],
   "oauth_providers": [
@@ -40,14 +46,19 @@
   "no_egress_carveouts": {
     "litellm": "self-hosted aggregator — routes locally, no proxy egress",
     "lmstudio": "local desktop LLM runner — no proxy egress",
+    "ollama": "local Ollama server — no proxy egress (localhost confinement)",
     "vllm": "self-hosted vLLM — no proxy egress"
   },
   "proxy_key_aliases": {
     "_note": "Daemon key → proxy roster key; all keys not listed here use identical names in both repos",
     "azure_openai": "azure",
     "claude": "anthropic",
+    "cloudflare_ai_gateway": "cloudflare",
     "moonshot_kimi": "moonshot",
+    "nvidia_nim": "nvidia",
+    "tencent_hunyuan": "tencent",
     "vercel_ai_gateway": "vercel",
+    "volcengine_ark": "volcengine",
     "zhipu_glm": "zhipu"
   },
   "cert_pin_citation": {
