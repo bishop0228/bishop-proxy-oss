@@ -1,0 +1,31 @@
+name: provider-roster-drift
+
+# CI DRIFT GATE — fails the build if the proxy's routed provider roster diverges
+# from the daemon's provider universe (test/fixtures/daemon-provider-roster.2026-05-30.json
+# minus documented no_egress_carveouts). Closes the cross-repo silent-divergence hole.
+#
+# Assertion: test/roster-drift.test.ts
+# Fixture:   test/fixtures/daemon-provider-roster.2026-05-30.json (refresh quarterly + pre-launch)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  drift-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run full test suite (includes roster-drift gate)
+        run: npm test

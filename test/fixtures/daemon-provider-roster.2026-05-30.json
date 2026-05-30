@@ -1,0 +1,59 @@
+{
+  "_note": "Daemon provider universe snapshot. Generated from health.py:802 universe = _MODEL_OAUTH_PROVIDERS | set(byok_provider_registry.list_wired_providers()) | {'claude','openai','gemini'}. Refresh cadence: quarterly and before each major launch. Bidirectional live drift detection (daemon-side fixture freshness check) folds into §H-DYNAMIC.",
+  "generated_from": "daemon/src/health.py:802",
+  "snapshot_date": "2026-05-30",
+  "refresh_cadence": "quarterly + before each major launch",
+  "byok_providers": [
+    "azure_openai",
+    "bedrock",
+    "cohere",
+    "deepseek",
+    "fireworks",
+    "grok",
+    "groq",
+    "huggingface",
+    "litellm",
+    "lmstudio",
+    "minimax",
+    "mistral",
+    "moonshot_kimi",
+    "openrouter",
+    "perplexity",
+    "together",
+    "vercel_ai_gateway",
+    "vertex",
+    "vllm",
+    "zhipu_glm"
+  ],
+  "oauth_providers": [
+    "github_copilot",
+    "nous_portal",
+    "openai_codex",
+    "qwen_alibaba",
+    "xai_grok"
+  ],
+  "extra_providers": [
+    "claude",
+    "gemini",
+    "openai"
+  ],
+  "no_egress_carveouts": {
+    "litellm": "self-hosted aggregator — routes locally, no proxy egress",
+    "lmstudio": "local desktop LLM runner — no proxy egress",
+    "vllm": "self-hosted vLLM — no proxy egress"
+  },
+  "proxy_key_aliases": {
+    "_note": "Daemon key → proxy roster key; all keys not listed here use identical names in both repos",
+    "azure_openai": "azure",
+    "claude": "anthropic",
+    "moonshot_kimi": "moonshot",
+    "vercel_ai_gateway": "vercel",
+    "zhipu_glm": "zhipu"
+  },
+  "cert_pin_citation": {
+    "daemon_module": "daemon/src/model/cert_pins.py",
+    "pinned_host": "proxy.mybishop.ai",
+    "pin_mode": "closed-by-default",
+    "note": "Cert-pin enforcement is daemon-side only. The proxy (Cloudflare Worker) cannot pin Python TLS chains. is_strict_mode() → CertPinningError + socket close. One pinned host, process-global no-bypass invariant, covered by daemon test suite. NOT duplicated in the proxy per §C-BRIDGE brief §5."
+  }
+}
