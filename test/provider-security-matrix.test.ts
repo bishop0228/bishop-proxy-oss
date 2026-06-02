@@ -160,8 +160,8 @@ describe("Dim 8 sealed-egress invariants (no-bypass)", () => {
     (globalThis as unknown as G).fetch = originalFetch;
   });
 
-  it("ALLOWED_OUTBOUND_HOSTS.length === 32 (§H-DYNAMIC sentinel — 27+5 BYOK)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(32);
+  it("ALLOWED_OUTBOUND_HOSTS.length === 81 (sentinel — 32 provider + 49 MCP egress, W38-S731 Block 4)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
   });
 
   it("no-runtime-widening: installFetchAllowlist blocks non-allowlisted host after install", async () => {
@@ -255,9 +255,10 @@ describe("§C-V verification", () => {
     ).rejects.toBeInstanceOf(OutboundHostNotAllowed);
   });
 
-  // V2 — length sentinel: exactly 32 (§H-DYNAMIC 27+5 BYOK; breaks loudly on silent host addition)
-  it("V2 ALLOWED_OUTBOUND_HOSTS.length === 32 (length sentinel)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(32);
+  // V2 — length sentinel: exactly 81 (32 provider + 49 MCP egress, W38-S731 Block 4;
+  // breaks loudly on silent host addition)
+  it("V2 ALLOWED_OUTBOUND_HOSTS.length === 81 (length sentinel)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
   });
 
   // V3 — suffix-spoof teeth: both canonical suffix-spoof variants are rejected
