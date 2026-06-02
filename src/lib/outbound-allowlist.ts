@@ -22,6 +22,12 @@
  * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
  * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29/2026-05-30.
  *
+ * §1.18.15 / W38-S731 Block 4 MCP egress (founder-approved 2026-06-02, length→81):
+ * the 49 verified static-host remote MCP servers (W38-S730 VERIFIED FINAL) add
+ * their single static upstream hosts here (32→81). These are operational-egress
+ * MCP destinations routed via the §3.2 proxy /mcp/<server_id> leg — NOT model
+ * inference upstreams. github reused api.githubcopilot.com (already present, +0).
+ *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
  * See README "Outbound fetch allowlist" section.
@@ -67,6 +73,63 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "gateway.ai.cloudflare.com",
   "api.hunyuan.cloud.tencent.com",
   "ark.cn-beijing.volces.com",
+  // ── W38-S731 Block 4 (founder-approved 2026-06-02): 49 remote MCP egress hosts ──
+  // Named, reviewed additions (Pillar 2). Each is the SINGLE static upstream
+  // host of a verified vendor-hosted MCP server (W38-S730 VERIFIED FINAL),
+  // reached only via the §3.2 proxy /mcp/<server_id> leg (src/routes/mcp.ts).
+  // MCP is operational egress, NOT model inference — no classifier/cost meter
+  // on this leg, only the flat abuse-bound quota. The 5 per-tenant/templated
+  // servers (snowflake/salesforce/microsoft-365/onedrive-sharepoint/netsuite)
+  // are DEFERRED — their per-account hosts break the frozen-host model.
+  "mcp.amplitude.com",
+  "mcp.asana.com",
+  "mcp.atlassian.com",
+  "mcp.attio.com",
+  "app.base44.com",
+  "bigquery.googleapis.com",
+  "mcp.box.com",
+  "api.brex.com",
+  "mcp.canva.com",
+  "mcp.close.com",
+  "mcp.cloudflare.com",
+  "mcp.context7.com",
+  "mcp.datadoghq.com",
+  "mcp.dropbox.com",
+  "mcp.exa.ai",
+  "api.fathom.ai",
+  "mcp.figma.com",
+  "mcp.firecrawl.dev",
+  "api.fireflies.ai",
+  "gitlab.com",
+  "gmailmcp.googleapis.com",
+  "calendarmcp.googleapis.com",
+  "drivemcp.googleapis.com",
+  "mcp.grafana.com",
+  "mcp.granola.ai",
+  "mcp.honeycomb.io",
+  "mcp.hubspot.com",
+  "ifttt.com",
+  "mcp.linear.app",
+  "mcp.lovable.dev",
+  "mcp.make.com",
+  "mcp.mixpanel.com",
+  "mcp.monday.com",
+  "mcp.neon.tech",
+  "mcp.notion.com",
+  "mcp.pagerduty.com",
+  "mcp.paypal.com",
+  "mcp.posthog.com",
+  "mcp.ramp.com",
+  "mcp.sentry.dev",
+  "mcp.slack.com",
+  "mcp.squareup.com",
+  "mcp.stripe.com",
+  "mcp.supabase.com",
+  "mcp.tavily.com",
+  "mcp.vercel.com",
+  "app.workato.com",
+  "mcp.zapier.com",
+  "mcp-us.zoom.us",
 ] as const);
 
 /**
