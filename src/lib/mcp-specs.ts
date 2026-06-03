@@ -26,6 +26,19 @@
  * header and admits it ONLY when it matches this spec's OWN hostPattern (spec-bind,
  * SSRF-bounded to the vendor domain). The per-account host is never added to
  * ALLOWED_OUTBOUND_HOSTS — it is an anchored ENTERPRISE_HOST_PATTERNS conjunct.
+ *
+ * W38-S736 FROZEN-HOST-WITH-TEMPLATED-TENANT-PATH specs (microsoft-365 +
+ * onedrive-sharepoint): the host is STILL frozen + allow-listed
+ * (agent365.svc.cloud.microsoft) — only the per-tenant id varies, and it lives in
+ * the PATH, not the host. Such a spec carries a normal frozen `host` PLUS
+ * `pathTenantFromUpstream: true` and a `pathPrefix` containing a literal
+ * `{tenantId}` placeholder. The handler reads a daemon-supplied
+ * X-Bishop-Upstream-Path-Tenant header, GUID-validates it (a bare lowercase GUID —
+ * which blocks `/`, `.`, `..` and every path-injection), and substitutes it into
+ * the placeholder server-side. A path segment cannot redirect egress off a frozen
+ * allow-listed host, so this is strictly lower-risk than the per-account case.
+ * salesforce is a plain frozen-host spec (api.salesforce.com; org via OAuth token,
+ * no per-tenant path).
  */
 
 import {
@@ -57,8 +70,21 @@ export interface McpServerSpec {
    * of these (databricks carries 3 — one per cloud). Required iff `hostFromUpstream`.
    */
   hostPattern?: RegExp[];
-  /** Path prefix appended to the upstream host when forwarding the JSON-RPC POST. */
+  /**
+   * Path prefix appended to the upstream host when forwarding the JSON-RPC POST.
+   * For a `pathTenantFromUpstream` spec this contains a literal `{tenantId}`
+   * placeholder the route substitutes server-side with a GUID-validated tenant.
+   */
   pathPrefix: string;
+  /**
+   * W38-S736 — true for a frozen-host server whose PATH carries a per-tenant id
+   * (microsoft-365 / onedrive-sharepoint on the shared Agent 365 host). The host
+   * stays frozen + allow-listed; only `pathPrefix`'s `{tenantId}` placeholder is
+   * substituted, from a daemon-supplied X-Bishop-Upstream-Path-Tenant header that
+   * the route GUID-validates (bare lowercase GUID → no path-injection). Compatible
+   * with `host` (the host is still frozen); never combined with `hostFromUpstream`.
+   */
+  pathTenantFromUpstream?: boolean;
   /** Upstream auth scheme. All current MCP servers rebuild a Bearer header. */
   authStyle: "bearer";
   /** Env var name for a base-URL override (test seam — never set in production). */
@@ -76,6 +102,7 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
   },
 
   // ── W38-S731 Block 4 — the 42 verified static-host remote MCP servers ──
+  // (W38-S736 adds 3 more fixed-host specs at the bottom → 45 fixed-host total.)
   // (W38-S734 removed 7 → native-covered: granola/fireflies/fathom meeting [UC1],
   //  zapier/make/ifttt/workato automation [UC16]. otter/n8n were never wired.)
   // Each replicates the github shape (host frozen + server-side; pathPrefix is
@@ -383,5 +410,39 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     pathPrefix: "/api/mcp",
     authStyle: "bearer",
     baseUrlVar: "MCP_SHOPIFY_BASE_URL",
+  },
+
+  // ── W38-S736 — the 3 fixed-host remote MCP servers (last formerly-deferred) ──
+  // microsoft-365 + onedrive-sharepoint share ONE frozen Microsoft Agent 365 host;
+  // the per-tenant id is in the PATH (pathTenantFromUpstream) — a daemon-supplied,
+  // route-GUID-validated {tenantId} segment substituted server-side. The host is
+  // still frozen + allow-listed (a path segment cannot redirect egress off it).
+  // salesforce is a plain frozen-host spec (org via OAuth token, no tenant path).
+  // Primary server-id per entry is best-effort; the exact server-id/path suffix is
+  // W13.16-live-verified (same posture as the per-account pathPrefix).
+  "microsoft-365": {
+    host: "agent365.svc.cloud.microsoft",
+    // Work IQ Mail (primary); a future Mail/Calendar/User split is a separate item.
+    pathPrefix: "/agents/tenants/{tenantId}/servers/mcp_MailTools",
+    pathTenantFromUpstream: true,
+    authStyle: "bearer",
+    baseUrlVar: "MCP_MICROSOFT_365_BASE_URL",
+  },
+  "onedrive-sharepoint": {
+    host: "agent365.svc.cloud.microsoft",
+    // SharePoint document libraries + OneDrive ('me'); a discrete OneDrive entry
+    // (mcp_OneDriveRemoteServer) is a possible future item.
+    pathPrefix: "/agents/tenants/{tenantId}/servers/mcp_SharePointRemoteServer",
+    pathTenantFromUpstream: true,
+    authStyle: "bearer",
+    baseUrlVar: "MCP_ONEDRIVE_SHAREPOINT_BASE_URL",
+  },
+  "salesforce": {
+    host: "api.salesforce.com",
+    // Salesforce Hosted MCP (GA April 2026); prod tier /platform/ (NOT /sandbox/).
+    // sobject-all = full CRUD (CRM write → HIGH; gateway gates writes per-call).
+    pathPrefix: "/platform/mcp/v1/platform/sobject-all",
+    authStyle: "bearer",
+    baseUrlVar: "MCP_SALESFORCE_BASE_URL",
   },
 });

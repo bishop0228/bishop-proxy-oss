@@ -107,6 +107,10 @@ export interface Env {
   MCP_NETSUITE_BASE_URL?: string;
   MCP_DATABRICKS_BASE_URL?: string;
   MCP_SHOPIFY_BASE_URL?: string;
+  // W38-S736 fixed-host remote MCP per-server base-URL overrides (test seam only)
+  MCP_MICROSOFT_365_BASE_URL?: string;
+  MCP_ONEDRIVE_SHAREPOINT_BASE_URL?: string;
+  MCP_SALESFORCE_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;

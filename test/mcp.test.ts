@@ -405,12 +405,13 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 
   // ── Probe 7: allowlist length sentinel (§3.2 no-runtime-widen) ───────
 
-  it("ALLOWED_OUTBOUND_HOSTS length === 74 + github host already present", () => {
+  it("ALLOWED_OUTBOUND_HOSTS length === 76 + github host already present", () => {
     // §1.18.15 itself added NO host (api.githubcopilot.com was already present
     // for the §1.17.16 GitHub Copilot OAuth leg; the MCP leg reuses it).
     // W38-S731 Block 4 added the 49 verified MCP egress hosts (32→81); W38-S734
-    // then unwired 7 → native-covered (81→74) — narrows egress, still no widen.
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(74);
+    // then unwired 7 → native-covered (81→74); W38-S736 added 2 fixed-host
+    // (agent365.svc.cloud.microsoft + api.salesforce.com) → 76. Still no widen.
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(76);
     expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("api.githubcopilot.com")).toBe(true);
   });
 
@@ -438,24 +439,37 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 // W38-S734 unwired 7 (granola/fireflies/fathom + zapier/make/ifttt/workato) → 43.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("W38-S731 Block 4 — MCP specs wired + allowlisted (47: 43 fixed + 4 per-account)", () => {
+describe("W38-S731 Block 4 — MCP specs wired + allowlisted (50: 46 fixed + 4 per-account)", () => {
   const allow = new Set<string>(ALLOWED_OUTBOUND_HOSTS as readonly string[]);
   const entries = Object.entries(MCP_SERVER_SPECS);
   const fixedEntries = entries.filter(([, s]) => !s.hostFromUpstream);
   const perAccountEntries = entries.filter(([, s]) => s.hostFromUpstream);
 
-  it("MCP_SERVER_SPECS has 47 entries (43 fixed-host + 4 per-account) and is frozen", () => {
-    expect(entries.length).toBe(47);
-    expect(fixedEntries.length).toBe(43);   // github + 42 Block-4 fixed-host
+  it("MCP_SERVER_SPECS has 50 entries (46 fixed-host + 4 per-account) and is frozen", () => {
+    expect(entries.length).toBe(50);
+    expect(fixedEntries.length).toBe(46);   // github + 42 Block-4 + 3 W38-S736 fixed-host
     expect(perAccountEntries.length).toBe(4); // W38-S735 snowflake/netsuite/databricks/shopify
     expect(Object.isFrozen(MCP_SERVER_SPECS)).toBe(true);
   });
 
-  it("the 3 still-deferred per-tenant/templated servers are NOT wired", () => {
-    // W38-S735 wired snowflake/netsuite (+ databricks/shopify) per-account; the
-    // remaining templated servers stay deferred (no spec).
-    for (const sid of ["salesforce", "microsoft-365", "onedrive-sharepoint"]) {
-      expect(MCP_SERVER_SPECS[sid]).toBeUndefined();
+  it("the 3 formerly-deferred servers are now wired fixed-host (W38-S736)", () => {
+    // W38-S736 wired the last 3 "templated" servers as FIXED-host: salesforce on
+    // api.salesforce.com (no tenant path); microsoft-365 + onedrive-sharepoint on
+    // the shared frozen Agent 365 host with a daemon-supplied GUID-validated
+    // {tenantId} PATH segment (pathTenantFromUpstream). None remains deferred.
+    const sf = MCP_SERVER_SPECS["salesforce"];
+    expect(sf).toBeDefined();
+    expect(sf.host).toBe("api.salesforce.com");
+    expect(sf.hostFromUpstream).toBeUndefined();
+    expect(sf.pathTenantFromUpstream).toBeUndefined();
+
+    for (const sid of ["microsoft-365", "onedrive-sharepoint"]) {
+      const spec = MCP_SERVER_SPECS[sid];
+      expect(spec).toBeDefined();
+      expect(spec.host).toBe("agent365.svc.cloud.microsoft");
+      expect(spec.hostFromUpstream).toBeUndefined();   // host is frozen, not per-account
+      expect(spec.pathTenantFromUpstream).toBe(true);
+      expect(spec.pathPrefix.includes("{tenantId}")).toBe(true);
     }
   });
 
@@ -653,6 +667,134 @@ describe("W38-S735 per-account host derivation (/mcp/<per-account server>)", () 
         if (otherSid === sid) continue;
         expect(patterns.some((re) => re.test(otherHost))).toBe(false);
       }
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W38-S736 — frozen-host-with-templated-tenant-PATH negative-security suite.
+//
+// microsoft-365 + onedrive-sharepoint share ONE frozen host
+// (agent365.svc.cloud.microsoft); the per-tenant id lives in the PATH and is
+// daemon-supplied (X-Bishop-Upstream-Path-Tenant). The route must: forward to
+// EXACTLY the frozen host with the GUID substituted into the path; refuse a
+// missing tenant; refuse any path-injection tenant (/, .., a dotted "host", a
+// non-GUID) — all WITHOUT forwarding. salesforce is a plain frozen-host spec and
+// sends NO tenant. Unit-style (handleMcp + stubbed global fetch): the upstream
+// forward is captured so we can assert host stays frozen AND the path carries the
+// substituted GUID; the no-forward legs assert fetch was never called.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("W38-S736 frozen-host + templated-tenant-PATH (/mcp/<microsoft server>)", () => {
+  const DAEMON_BEARER = "bsk_staging_" + "v".repeat(24);
+  const MS_HOST = "agent365.svc.cloud.microsoft";
+  const VALID_TENANT = "9a8b7c6d-1234-4567-89ab-0123456789ab"; // bare lowercase GUID
+
+  function tenantReq(serverId: string, tenant: string | null): Request {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      authorization: `Bearer ${DAEMON_BEARER}`,
+      "x-bishop-upstream-key": UPSTREAM_KEY,
+    };
+    if (tenant !== null) headers["x-bishop-upstream-path-tenant"] = tenant;
+    return new Request(`http://proxy/mcp/${serverId}`, {
+      method: "POST",
+      headers,
+      body: TEST_BODY,
+    });
+  }
+
+  let capturedUrl: string | null;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    capturedUrl = null;
+    mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      capturedUrl = input instanceof Request ? input.url : String(input);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function expectRefused(serverId: string, tenant: string | null, errorCode: string) {
+    const resp = await handleMcp(tenantReq(serverId, tenant), makeAllowEnv(), makeCtx());
+    expect(resp.status).toBe(400);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toBe(errorCode);
+    expect(mockFetch).not.toHaveBeenCalled(); // NO forward on a refusal
+  }
+
+  // ── ★ valid GUID → forwards to EXACTLY the frozen host, GUID in the path ────
+  for (const sid of ["microsoft-365", "onedrive-sharepoint"]) {
+    it(`★ ${sid}: valid GUID substitutes into the path; host STILL the frozen host`, async () => {
+      const resp = await handleMcp(tenantReq(sid, VALID_TENANT), makeAllowEnv(), makeCtx());
+      expect(resp.status).toBe(200);
+      expect(mockFetch).toHaveBeenCalledOnce();
+      const u = new URL(capturedUrl as string);
+      // (a) host is UNCHANGED — the frozen Agent 365 host, never request-derived.
+      expect(u.hostname).toBe(MS_HOST);
+      // (b) the {tenantId} placeholder is GONE, replaced by the validated GUID.
+      expect(u.pathname).toContain(`/agents/tenants/${VALID_TENANT}/servers/`);
+      expect(u.pathname.includes("{tenantId}")).toBe(false);
+    });
+  }
+
+  // ── ★ salesforce: plain frozen-host spec, forwards to its host, NO tenant ───
+  it("★ salesforce: forwards to the exact frozen host, no tenant header required", async () => {
+    // No tenant header supplied — salesforce is NOT pathTenantFromUpstream.
+    const resp = await handleMcp(tenantReq("salesforce", null), makeAllowEnv(), makeCtx());
+    expect(resp.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const u = new URL(capturedUrl as string);
+    expect(u.hostname).toBe("api.salesforce.com");
+    expect(u.pathname.startsWith("/platform/mcp/v1/platform/sobject-all")).toBe(true);
+  });
+
+  // ── ★ missing tenant → 400 mcp_upstream_tenant_missing, NO forward ──────────
+  it("★ microsoft-365: missing tenant header → 400 mcp_upstream_tenant_missing, no forward", async () => {
+    await expectRefused("microsoft-365", null, "mcp_upstream_tenant_missing");
+  });
+  it("★ onedrive-sharepoint: missing tenant header → 400 mcp_upstream_tenant_missing, no forward", async () => {
+    await expectRefused("onedrive-sharepoint", null, "mcp_upstream_tenant_missing");
+  });
+
+  // ── ★ path-injection tenant → 400 mcp_tenant_not_allowed, NO forward ────────
+  const INJECTION_TENANTS = [
+    "..%2f",                                   // encoded path traversal
+    "abc/../../evil",                          // raw traversal
+    "foo.bar",                                 // dotted "host"-like value
+    "../../../etc/passwd",                     // classic traversal
+    "9A8B7C6D-1234-4567-89AB-0123456789AB",    // UPPERCASE GUID (lowercase-only regex)
+    "9a8b7c6d-1234-4567-89ab-0123456789ab/x",  // valid GUID + smuggled segment
+    "",                                        // empty after the header is present-but-blank → missing
+  ] as const;
+  for (const bad of INJECTION_TENANTS) {
+    const expected = bad === "" ? "mcp_upstream_tenant_missing" : "mcp_tenant_not_allowed";
+    it(`★ microsoft-365: path-injection tenant ${JSON.stringify(bad)} → 400 ${expected}, no forward`, async () => {
+      await expectRefused("microsoft-365", bad, expected);
+    });
+  }
+
+  // ── 46 fixed + 4 per-account intact (no regression of the prior cohorts) ────
+  it("the 46 fixed-host + 4 per-account specs are intact (no host/spec-bind regression)", () => {
+    const entries = Object.entries(MCP_SERVER_SPECS);
+    const fixed = entries.filter(([, s]) => !s.hostFromUpstream);
+    const perAccount = entries.filter(([, s]) => s.hostFromUpstream);
+    expect(fixed.length).toBe(46);
+    expect(perAccount.length).toBe(4);
+    // every fixed host is exact-allow-listed; every per-account spec is host-free.
+    const allow = new Set<string>(ALLOWED_OUTBOUND_HOSTS as readonly string[]);
+    for (const [, s] of fixed) expect(allow.has(s.host as string)).toBe(true);
+    for (const [, s] of perAccount) {
+      expect(s.host).toBeUndefined();
+      expect(s.hostFromUpstream).toBe(true);
     }
   });
 });

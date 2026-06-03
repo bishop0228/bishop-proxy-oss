@@ -22,11 +22,11 @@
  * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
  * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29/2026-05-30.
  *
- * §1.18.15 / W38-S731 Block 4 MCP egress (founder-approved 2026-06-02, length→74):
- * the 42 verified static-host remote MCP servers add their single static upstream
- * hosts here (32→74). These are operational-egress MCP destinations routed via the
- * §3.2 proxy /mcp/<server_id> leg — NOT model inference upstreams. github reused
- * api.githubcopilot.com (already present, +0).
+ * §1.18.15 / W38-S731 Block 4 MCP egress (founder-approved 2026-06-02, length→76
+ * after W38-S736): the 42 verified static-host remote MCP servers add their single
+ * static upstream hosts here (32→74). These are operational-egress MCP destinations
+ * routed via the §3.2 proxy /mcp/<server_id> leg — NOT model inference upstreams.
+ * github reused api.githubcopilot.com (already present, +0).
  *
  * W38-S734 unwire (founder-approved 2026-06-02, length 81→74): the 7 replace-market
  * connectors granola/fireflies/fathom (meeting, UC1 native local capture) +
@@ -47,6 +47,16 @@
  * SSRF-bounded to the vendor domain. Databricks is MULTI-CLOUD: 3 anchored patterns
  * (cloud.databricks.com AWS / azuredatabricks.net Azure / gcp.databricks.com GCP).
  * Each pattern is fully anchored, no `i` flag, no `.*`, no unanchored alternation.
+ *
+ * W38-S736 fixed-host remote MCP (founder-reviewed 2026-06-03, length 74→76): the
+ * last 3 deferred "templated" servers are FIXED-host after all. microsoft-365 +
+ * onedrive-sharepoint share the single frozen Microsoft Agent 365 host
+ * `agent365.svc.cloud.microsoft` (the per-tenant id is in the PATH, not the host —
+ * a daemon-supplied, GUID-validated `{tenantId}` segment the /mcp route substitutes
+ * server-side; a path segment cannot redirect egress off a frozen allow-listed host).
+ * salesforce uses the frozen Hosted-MCP host `api.salesforce.com` (org identified by
+ * the OAuth token, NOT the URL). Both are EXACT-match entries (NOT patterns) added
+ * below — none of the 3 is per-account, and none remains deferred.
  *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
@@ -99,9 +109,10 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // host of a verified vendor-hosted MCP server (W38-S730 VERIFIED FINAL),
   // reached only via the §3.2 proxy /mcp/<server_id> leg (src/routes/mcp.ts).
   // MCP is operational egress, NOT model inference — no classifier/cost meter
-  // on this leg, only the flat abuse-bound quota. The 5 per-tenant/templated
-  // servers (snowflake/salesforce/microsoft-365/onedrive-sharepoint/netsuite)
-  // are DEFERRED — their per-account hosts break the frozen-host model.
+  // on this leg, only the flat abuse-bound quota. (Formerly-deferred note now
+  // false: snowflake + netsuite are per-account-wired (W38-S735); salesforce +
+  // microsoft-365 + onedrive-sharepoint are fixed-host-wired (W38-S736). None
+  // of the original "templated" servers remains deferred.)
   "mcp.amplitude.com",
   "mcp.asana.com",
   "mcp.atlassian.com",
@@ -144,6 +155,14 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "mcp.tavily.com",
   "mcp.vercel.com",
   "mcp-us.zoom.us",
+  // ── W38-S736 (founder-reviewed 2026-06-03): 2 fixed-host remote MCP egress ──
+  // The last 3 deferred "templated" servers are FIXED-host. microsoft-365 +
+  // onedrive-sharepoint share ONE frozen Microsoft Agent 365 host (per-tenant id
+  // lives in the daemon-supplied, GUID-validated PATH segment — see mcp-specs.ts
+  // pathTenantFromUpstream + src/routes/mcp.ts); salesforce uses the frozen Hosted
+  // MCP host (org via OAuth token, not the URL). EXACT-match (NOT patterns).
+  "agent365.svc.cloud.microsoft",
+  "api.salesforce.com",
 ] as const);
 
 /**

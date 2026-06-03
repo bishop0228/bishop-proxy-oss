@@ -16,6 +16,11 @@
  *          vendor pattern (spec.hostPattern — spec-bind, SSRF-bounded to the
  *          vendor domain). Missing header → 400; pattern mismatch → 400; never
  *          a forward to a non-matching host.
+ *   3b. per-tenant PATH (W38-S736): a frozen-host spec MAY carry
+ *        pathTenantFromUpstream — its pathPrefix has a {tenantId} placeholder the
+ *        route substitutes from a daemon-supplied, GUID-validated
+ *        X-Bishop-Upstream-Path-Tenant header. Missing → 400; non-GUID → 400. The
+ *        host stays frozen (a path segment cannot redirect egress off it).
  *   4. rebuild upstream Bearer auth from x-bishop-upstream-key (missing → 400);
  *      all client identifiers stripped (Pillar 1 — only content-type + accept
  *      forwarded so the upstream can negotiate SSE).
@@ -54,6 +59,13 @@ interface VerifyTokenResult {
   record: AuthRecord | null;
   reason: "not_found" | "revoked" | "expired" | null;
 }
+
+/**
+ * W38-S736 — a bare lowercase GUID (8-4-4-4-12 hex). The daemon-supplied
+ * per-tenant PATH segment MUST match this exactly: anchored ^…$, lowercase-only,
+ * no `/`, `.`, `..` or any other character — which blocks every path-injection.
+ */
+const MCP_TENANT_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /**
  * Rebuild upstream headers for the MCP forward. Strip-all like
@@ -156,6 +168,31 @@ export async function handleMcp(
     upstreamHost = spec.host;
   }
 
+  // Step 3b — per-tenant PATH substitution (W38-S736). A frozen-host spec MAY
+  // carry a per-tenant id in its PATH (spec.pathTenantFromUpstream): microsoft-365
+  // / onedrive-sharepoint on the shared Agent 365 host. The host is UNCHANGED
+  // (still frozen + allow-listed, Step 3) — only pathPrefix's {tenantId} placeholder
+  // is substituted from the daemon-supplied X-Bishop-Upstream-Path-Tenant header,
+  // which is GUID-validated (a bare lowercase GUID blocks `/`, `.`, `..` and every
+  // path-injection). Missing → 400 mcp_upstream_tenant_missing; non-GUID → 400
+  // mcp_tenant_not_allowed (fail-closed, NO forward).
+  // §3.2: frozen host + daemon-supplied GUID-validated tenant PATH segment (host
+  // never from request; a path segment cannot redirect egress off a frozen
+  // allow-listed host) — see strongest_claims_security.md §3.2.
+  let effectivePathPrefix = spec.pathPrefix;
+  if (spec.pathTenantFromUpstream) {
+    const tenant = (request.headers.get("x-bishop-upstream-path-tenant") ?? "").trim();
+    if (!tenant) {
+      emitError(requestId, ip, requestSize, 400, "mcp_upstream_tenant_missing", startedAt, tokenId);
+      return jsonError(400, "mcp_upstream_tenant_missing");
+    }
+    if (!MCP_TENANT_GUID_RE.test(tenant)) {
+      emitError(requestId, ip, requestSize, 400, "mcp_tenant_not_allowed", startedAt, tokenId);
+      return jsonError(400, "mcp_tenant_not_allowed");
+    }
+    effectivePathPrefix = spec.pathPrefix.replace("{tenantId}", tenant);
+  }
+
   // Step 4 — entitlement gate: rebuild upstream auth from x-bishop-upstream-key.
   const upstreamKey = (request.headers.get("x-bishop-upstream-key") ?? "").trim();
   if (!upstreamKey) {
@@ -197,7 +234,7 @@ export async function handleMcp(
     ?? `https://${upstreamHost}`;
   const searchSuffix = url.search || "";
   const upstream = await fetchWithRetry(
-    `${baseUrl}${spec.pathPrefix}${derivedPath.replace(/^\//, "")}${searchSuffix}`,
+    `${baseUrl}${effectivePathPrefix}${derivedPath.replace(/^\//, "")}${searchSuffix}`,
     {
       method: "POST",
       headers: upstreamHeaders,
