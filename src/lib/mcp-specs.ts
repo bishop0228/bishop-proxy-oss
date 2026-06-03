@@ -40,7 +40,9 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     baseUrlVar: "MCP_GITHUB_BASE_URL",
   },
 
-  // ── W38-S731 Block 4 — the 49 verified static-host remote MCP servers ──
+  // ── W38-S731 Block 4 — the 42 verified static-host remote MCP servers ──
+  // (W38-S734 removed 7 → native-covered: granola/fireflies/fathom meeting [UC1],
+  //  zapier/make/ifttt/workato automation [UC16]. otter/n8n were never wired.)
   // Each replicates the github shape (host frozen + server-side; pathPrefix is
   // the path after the host in the verified endpoint; baseUrlVar is the
   // test-seam override, never set in production). Every host below is ALREADY
@@ -139,12 +141,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     authStyle: "bearer",
     baseUrlVar: "MCP_EXA_BASE_URL",
   },
-  "fathom": {
-    host: "api.fathom.ai",
-    pathPrefix: "/mcp",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_FATHOM_BASE_URL",
-  },
   "figma": {
     host: "mcp.figma.com",
     pathPrefix: "/mcp",
@@ -156,12 +152,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     pathPrefix: "/v2/mcp",
     authStyle: "bearer",
     baseUrlVar: "MCP_FIRECRAWL_BASE_URL",
-  },
-  "fireflies": {
-    host: "api.fireflies.ai",
-    pathPrefix: "/mcp",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_FIREFLIES_BASE_URL",
   },
   "gitlab": {
     host: "gitlab.com",
@@ -193,12 +183,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     authStyle: "bearer",
     baseUrlVar: "MCP_GRAFANA_BASE_URL",
   },
-  "granola": {
-    host: "mcp.granola.ai",
-    pathPrefix: "/mcp",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_GRANOLA_BASE_URL",
-  },
   "honeycomb": {
     host: "mcp.honeycomb.io",
     pathPrefix: "/mcp",
@@ -211,12 +195,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     authStyle: "bearer",
     baseUrlVar: "MCP_HUBSPOT_BASE_URL",
   },
-  "ifttt": {
-    host: "ifttt.com",
-    pathPrefix: "/mcp",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_IFTTT_BASE_URL",
-  },
   "linear": {
     host: "mcp.linear.app",
     pathPrefix: "/mcp",
@@ -228,12 +206,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     pathPrefix: "",
     authStyle: "bearer",
     baseUrlVar: "MCP_LOVABLE_BASE_URL",
-  },
-  "make": {
-    host: "mcp.make.com",
-    pathPrefix: "/sse",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_MAKE_BASE_URL",
   },
   "mixpanel": {
     host: "mcp.mixpanel.com",
@@ -324,18 +296,6 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     pathPrefix: "",
     authStyle: "bearer",
     baseUrlVar: "MCP_VERCEL_BASE_URL",
-  },
-  "workato": {
-    host: "app.workato.com",
-    pathPrefix: "/mcp",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_WORKATO_BASE_URL",
-  },
-  "zapier": {
-    host: "mcp.zapier.com",
-    pathPrefix: "/api/v1/connect",
-    authStyle: "bearer",
-    baseUrlVar: "MCP_ZAPIER_BASE_URL",
   },
   "zoom": {
     host: "mcp-us.zoom.us",

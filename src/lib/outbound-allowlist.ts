@@ -22,11 +22,17 @@
  * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
  * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29/2026-05-30.
  *
- * §1.18.15 / W38-S731 Block 4 MCP egress (founder-approved 2026-06-02, length→81):
- * the 49 verified static-host remote MCP servers (W38-S730 VERIFIED FINAL) add
- * their single static upstream hosts here (32→81). These are operational-egress
- * MCP destinations routed via the §3.2 proxy /mcp/<server_id> leg — NOT model
- * inference upstreams. github reused api.githubcopilot.com (already present, +0).
+ * §1.18.15 / W38-S731 Block 4 MCP egress (founder-approved 2026-06-02, length→74):
+ * the 42 verified static-host remote MCP servers add their single static upstream
+ * hosts here (32→74). These are operational-egress MCP destinations routed via the
+ * §3.2 proxy /mcp/<server_id> leg — NOT model inference upstreams. github reused
+ * api.githubcopilot.com (already present, +0).
+ *
+ * W38-S734 unwire (founder-approved 2026-06-02, length 81→74): the 7 replace-market
+ * connectors granola/fireflies/fathom (meeting, UC1 native local capture) +
+ * zapier/make/ifttt/workato (automation, UC16 native governed workflows) are
+ * NATIVE-COVERED — their hosts are REMOVED here (narrows §3.2 egress; Pillar-2
+ * positive). otter + n8n were catalog-only (never wired), so no host change.
  *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
@@ -73,7 +79,8 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "gateway.ai.cloudflare.com",
   "api.hunyuan.cloud.tencent.com",
   "ark.cn-beijing.volces.com",
-  // ── W38-S731 Block 4 (founder-approved 2026-06-02): 49 remote MCP egress hosts ──
+  // ── W38-S731 Block 4 (founder-approved 2026-06-02): 42 remote MCP egress hosts ──
+  // (W38-S734 removed 7: granola/fireflies/fathom + zapier/make/ifttt/workato → native-covered)
   // Named, reviewed additions (Pillar 2). Each is the SINGLE static upstream
   // host of a verified vendor-hosted MCP server (W38-S730 VERIFIED FINAL),
   // reached only via the §3.2 proxy /mcp/<server_id> leg (src/routes/mcp.ts).
@@ -96,22 +103,17 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "mcp.datadoghq.com",
   "mcp.dropbox.com",
   "mcp.exa.ai",
-  "api.fathom.ai",
   "mcp.figma.com",
   "mcp.firecrawl.dev",
-  "api.fireflies.ai",
   "gitlab.com",
   "gmailmcp.googleapis.com",
   "calendarmcp.googleapis.com",
   "drivemcp.googleapis.com",
   "mcp.grafana.com",
-  "mcp.granola.ai",
   "mcp.honeycomb.io",
   "mcp.hubspot.com",
-  "ifttt.com",
   "mcp.linear.app",
   "mcp.lovable.dev",
-  "mcp.make.com",
   "mcp.mixpanel.com",
   "mcp.monday.com",
   "mcp.neon.tech",
@@ -127,8 +129,6 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "mcp.supabase.com",
   "mcp.tavily.com",
   "mcp.vercel.com",
-  "app.workato.com",
-  "mcp.zapier.com",
   "mcp-us.zoom.us",
 ] as const);
 

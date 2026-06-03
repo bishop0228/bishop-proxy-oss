@@ -241,11 +241,12 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("bedrock-runtime.us-east-1.amazonaws.com");
     // §1.17.19 Vertex SA-token mint — Google OAuth2 token endpoint
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("oauth2.googleapis.com");
-    // W38-S731 Block 4 — spot-check a few of the 49 MCP egress hosts (32→81).
+    // W38-S731 Block 4 — spot-check a few of the 42 MCP egress hosts (W38-S734
+    // unwired 7 → native-covered; length 81→74).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp.notion.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp.stripe.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp-us.zoom.us");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(81);
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(74);
   });
 });
 

@@ -1,17 +1,17 @@
 /**
  * Interceptor-level floor-change guards for §1.17.18/§1.17.19 (ENTERPRISE_HOST_PATTERNS)
  * and §H-DYNAMIC 2026-05-30 (5 new BYOK upstream hosts) + W38-S731 Block 4
- * (49 remote MCP egress hosts, length 32→81).
+ * (42 remote MCP egress hosts, length 32→74 after W38-S734 unwired 7 → native-covered).
  *
  * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
- *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 81 — Block 4 adds 49 MCP egress hosts
+ *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 74 — 32 provider + 42 MCP egress
  *
  * §1.17.19 Vertex guards:
  *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
  *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
- *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 81 — Block 4 adds 49 MCP egress hosts
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 74 — 32 provider + 42 MCP egress
  *
  * §H-DYNAMIC BYOK expansion guards (founder-signed-off 2026-05-30):
  *   (10a) Each of 5 new hosts is in ALLOWED_OUTBOUND_HOSTS
@@ -81,8 +81,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 81 — W38-S731 Block 4 adds 49 MCP egress hosts (32→81)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 74 — 32 provider + 42 MCP egress (W38-S734 unwired 7)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(74);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -102,8 +102,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 81 — W38-S731 Block 4 adds 49 MCP egress hosts (exact-match)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 74 — 32 provider + 42 MCP egress (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(74);
   });
 });
 

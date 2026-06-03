@@ -405,12 +405,12 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 
   // ── Probe 7: allowlist length sentinel (§3.2 no-runtime-widen) ───────
 
-  it("ALLOWED_OUTBOUND_HOSTS length === 81 + github host already present", () => {
+  it("ALLOWED_OUTBOUND_HOSTS length === 74 + github host already present", () => {
     // §1.18.15 itself added NO host (api.githubcopilot.com was already present
     // for the §1.17.16 GitHub Copilot OAuth leg; the MCP leg reuses it).
-    // W38-S731 Block 4 then adds the 49 verified MCP egress hosts (32→81) as
-    // named, reviewed, STATIC additions — still no runtime widen.
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
+    // W38-S731 Block 4 added the 49 verified MCP egress hosts (32→81); W38-S734
+    // then unwired 7 → native-covered (81→74) — narrows egress, still no widen.
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(74);
     expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("api.githubcopilot.com")).toBe(true);
   });
 
@@ -431,18 +431,19 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // W38-S731 Block 4 — every wired MCP spec is host-allowlisted + SSRF-safe.
 //
-// Data-driven invariant over ALL MCP_SERVER_SPECS (github + the 49). This is
+// Data-driven invariant over ALL MCP_SERVER_SPECS (github + the 42). This is
 // the durable, committed half of the §5 ultracode spec-audit: no spec may carry
 // a host outside ALLOWED_OUTBOUND_HOSTS (the route step-3 backstop would 500),
 // and every host is a single static DNS host (no SSRF / per-tenant template).
+// W38-S734 unwired 7 (granola/fireflies/fathom + zapier/make/ifttt/workato) → 43.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("W38-S731 Block 4 — MCP specs wired + allowlisted (all 50)", () => {
+describe("W38-S731 Block 4 — MCP specs wired + allowlisted (all 43)", () => {
   const allow = new Set<string>(ALLOWED_OUTBOUND_HOSTS as readonly string[]);
   const entries = Object.entries(MCP_SERVER_SPECS);
 
-  it("MCP_SERVER_SPECS has 50 entries (github + 49 Block-4 servers) and is frozen", () => {
-    expect(entries.length).toBe(50);
+  it("MCP_SERVER_SPECS has 43 entries (github + 42 Block-4 servers) and is frozen", () => {
+    expect(entries.length).toBe(43);
     expect(Object.isFrozen(MCP_SERVER_SPECS)).toBe(true);
   });
 
