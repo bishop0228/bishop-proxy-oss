@@ -13,15 +13,50 @@
  * so there is no tier/classify/cost-meter on this leg, only a flat abuse-bound
  * quota check).
  *
- * Do NOT add an entry here without a corresponding host already present in
- * src/lib/outbound-allowlist.ts (the host must NOT widen the allowlist — Block 4
- * adds the remaining servers as host-already-present spec entries) and a
+ * Do NOT add a FIXED-host entry here without a corresponding host already present
+ * in src/lib/outbound-allowlist.ts (the host must NOT widen the allowlist — Block
+ * 4 adds the remaining servers as host-already-present spec entries) and a
  * <SERVER>_BASE_URL env field in src/index.ts Env (test seam only).
+ *
+ * W38-S735 PER-ACCOUNT specs (snowflake/netsuite/databricks/shopify): the upstream
+ * host is per-customer and CANNOT be frozen. Such a spec carries `hostFromUpstream:
+ * true` + `hostPattern` (the SPECIFIC anchored vendor pattern(s) from
+ * outbound-allowlist.ts bound to THIS spec) instead of a `host`. The handler
+ * (src/routes/mcp.ts) reads the host from the daemon-supplied X-Bishop-Upstream-Host
+ * header and admits it ONLY when it matches this spec's OWN hostPattern (spec-bind,
+ * SSRF-bounded to the vendor domain). The per-account host is never added to
+ * ALLOWED_OUTBOUND_HOSTS — it is an anchored ENTERPRISE_HOST_PATTERNS conjunct.
  */
 
+import {
+  SNOWFLAKE_HOST_PATTERN,
+  NETSUITE_HOST_PATTERN,
+  SHOPIFY_HOST_PATTERN,
+  DATABRICKS_AWS_HOST_PATTERN,
+  DATABRICKS_AZURE_HOST_PATTERN,
+  DATABRICKS_GCP_HOST_PATTERN,
+} from "./outbound-allowlist";
+
 export interface McpServerSpec {
-  /** Upstream MCP host — frozen, server-side, MUST already be in ALLOWED_OUTBOUND_HOSTS. */
-  host: string;
+  /**
+   * Upstream MCP host for a FIXED-host server — frozen, server-side, MUST already
+   * be in ALLOWED_OUTBOUND_HOSTS. `undefined` for a per-account spec (see
+   * `hostFromUpstream`), where the host arrives daemon-supplied + pattern-validated.
+   */
+  host?: string;
+  /**
+   * W38-S735 — true for a per-account server whose host is per-customer and so
+   * cannot be frozen. The host is read from the X-Bishop-Upstream-Host request
+   * header and validated against `hostPattern` (this spec's OWN bound vendor
+   * pattern). Mutually exclusive with `host`.
+   */
+  hostFromUpstream?: boolean;
+  /**
+   * W38-S735 — the SPECIFIC anchored vendor pattern(s) bound to this per-account
+   * spec (spec-bind). A daemon-supplied host is admitted only when it matches one
+   * of these (databricks carries 3 — one per cloud). Required iff `hostFromUpstream`.
+   */
+  hostPattern?: RegExp[];
   /** Path prefix appended to the upstream host when forwarding the JSON-RPC POST. */
   pathPrefix: string;
   /** Upstream auth scheme. All current MCP servers rebuild a Bearer header. */
@@ -302,5 +337,51 @@ export const MCP_SERVER_SPECS: Readonly<Record<string, McpServerSpec>> = Object.
     pathPrefix: "/mcp/zoom/streamable",
     authStyle: "bearer",
     baseUrlVar: "MCP_ZOOM_BASE_URL",
+  },
+
+  // ── W38-S735 — the 4 PER-ACCOUNT remote MCP servers ──────────────────────
+  // No frozen `host`: each upstream host is per-customer. The handler reads it
+  // from X-Bishop-Upstream-Host and admits it ONLY when it matches THIS spec's
+  // hostPattern (spec-bind — a snowflake request can never reach a netsuite host).
+  // pathPrefix is the fixed vendor portion of the verified endpoint; the per-
+  // account object path (snowflake mcp-servers/<name>, databricks
+  // vector-search|functions|genie|sql/<...>) is appended at wire time and the
+  // exact path is live-verified at W13.16. The host-binding is the §3.2 boundary.
+  "snowflake": {
+    hostFromUpstream: true,
+    hostPattern: [SNOWFLAKE_HOST_PATTERN],
+    // Snowflake-managed MCP: /api/v2/databases/{db}/schemas/{schema}/mcp-servers/{name}
+    pathPrefix: "/api/v2",
+    authStyle: "bearer",
+    baseUrlVar: "MCP_SNOWFLAKE_BASE_URL",
+  },
+  "netsuite": {
+    hostFromUpstream: true,
+    hostPattern: [NETSUITE_HOST_PATTERN],
+    // NetSuite SuiteTalk REST base (per-account MCP path live-verified W13.16).
+    pathPrefix: "/services/rest",
+    authStyle: "bearer",
+    baseUrlVar: "MCP_NETSUITE_BASE_URL",
+  },
+  "databricks": {
+    hostFromUpstream: true,
+    // MULTI-CLOUD: AWS / Azure / GCP — the spec accepts ONLY databricks hosts.
+    hostPattern: [
+      DATABRICKS_AWS_HOST_PATTERN,
+      DATABRICKS_AZURE_HOST_PATTERN,
+      DATABRICKS_GCP_HOST_PATTERN,
+    ],
+    // Databricks managed MCP: /api/2.0/mcp/{vector-search|functions|genie|sql}/...
+    pathPrefix: "/api/2.0/mcp",
+    authStyle: "bearer",
+    baseUrlVar: "MCP_DATABRICKS_BASE_URL",
+  },
+  "shopify": {
+    hostFromUpstream: true,
+    hostPattern: [SHOPIFY_HOST_PATTERN],
+    // Shopify Storefront MCP — fixed path on every store: https://<shop>.myshopify.com/api/mcp
+    pathPrefix: "/api/mcp",
+    authStyle: "bearer",
+    baseUrlVar: "MCP_SHOPIFY_BASE_URL",
   },
 });

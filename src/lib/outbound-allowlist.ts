@@ -34,6 +34,20 @@
  * NATIVE-COVERED — their hosts are REMOVED here (narrows §3.2 egress; Pillar-2
  * positive). otter + n8n were catalog-only (never wired), so no host change.
  *
+ * W38-S735 per-account remote MCP (founder-reviewed 2026-06-02, length UNCHANGED 74):
+ * the 4 per-account-host remote MCP servers (snowflake, netsuite, databricks,
+ * shopify) cannot freeze a single upstream host — their host is per-customer
+ * (<org>.snowflakecomputing.com, <acct>.suitetalk.api.netsuite.com, the databricks
+ * per-cloud workspace host, <shop>.myshopify.com). They are NOT added to
+ * ALLOWED_OUTBOUND_HOSTS; instead each named, founder-reviewed vendor host shape
+ * is an anchored ENTERPRISE_HOST_PATTERNS conjunct (same mechanism + floor-not-
+ * ceiling property as the Azure/Vertex per-customer hosts). The /mcp route admits
+ * a per-account host ONLY when it matches the SPECIFIC vendor pattern bound to the
+ * requested spec (src/lib/mcp-specs.ts hostPattern), daemon-supplied + spec-bound +
+ * SSRF-bounded to the vendor domain. Databricks is MULTI-CLOUD: 3 anchored patterns
+ * (cloud.databricks.com AWS / azuredatabricks.net Azure / gcp.databricks.com GCP).
+ * Each pattern is fully anchored, no `i` flag, no `.*`, no unanchored alternation.
+ *
  * Modifications to ALLOWED_OUTBOUND_HOSTS or the interceptor logic require
  * explicit security review (floor-not-ceiling rule and defense-in-depth review).
  * See README "Outbound fetch allowlist" section.
@@ -137,9 +151,44 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
  * floor-not-ceiling preserved). Each is fully anchored, single DNS label,
  * lowercase-only, no `i` flag, no .*, no unanchored alternation.
  */
+// ── W38-S735 per-account remote MCP vendor host patterns (founder-reviewed
+// 2026-06-02) ──────────────────────────────────────────────────────────────
+// Each is a NAMED, spec-bound vendor host shape. The /mcp route validates a
+// daemon-supplied X-Bishop-Upstream-Host against the SPECIFIC pattern bound to
+// the requested spec (never merely "any enterprise pattern") — a snowflake spec
+// admits ONLY *.snowflakecomputing.com. Exported individually so mcp-specs.ts
+// binds the exact pattern(s) per server (spec-bind, §3.2 SSRF).
+// Snowflake: modern org-account is a single label (<orgname>-<account>); the
+// legacy account-locator-with-region + privatelink MULTI-label forms are NOT
+// admitted by this single-label pattern (flagged — not broadened to .*).
+export const SNOWFLAKE_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.snowflakecomputing\.com$/;
+export const NETSUITE_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.suitetalk\.api\.netsuite\.com$/;
+export const SHOPIFY_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$/;
+// Databricks is MULTI-CLOUD. AWS = single label before .cloud.databricks.com.
+// Azure = adb-<workspace-id-digits>.<random-digits>.azuredatabricks.net (2 labels).
+// GCP = <workspace-id>.<digits>.gcp.databricks.com (2 labels). Each is fully
+// anchored with explicit digit structure — NOT broadened to .*.
+export const DATABRICKS_AWS_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloud\.databricks\.com$/;
+export const DATABRICKS_AZURE_HOST_PATTERN =
+  /^adb-[0-9]{1,20}\.[0-9]{1,3}\.azuredatabricks\.net$/;
+export const DATABRICKS_GCP_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.[0-9]{1,3}\.gcp\.databricks\.com$/;
+
 export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openai\.azure\.com$/,
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-aiplatform\.googleapis\.com$/,
+  // W38-S735 per-account remote MCP vendor hosts (the runtime fetch backstop
+  // admits these; the /mcp route's spec-bound check is the explicit gate).
+  SNOWFLAKE_HOST_PATTERN,
+  NETSUITE_HOST_PATTERN,
+  SHOPIFY_HOST_PATTERN,
+  DATABRICKS_AWS_HOST_PATTERN,
+  DATABRICKS_AZURE_HOST_PATTERN,
+  DATABRICKS_GCP_HOST_PATTERN,
 ];
 
 /** Returns true if host matches an anchored enterprise-host pattern. */

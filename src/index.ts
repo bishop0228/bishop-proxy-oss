@@ -102,6 +102,11 @@ export interface Env {
   VERTEX_TOKEN_BASE_URL?: string;
   // §1.18.15 MCP-forward leg per-server base-URL override (test seam)
   MCP_GITHUB_BASE_URL?: string;
+  // W38-S735 per-account remote MCP per-server base-URL overrides (test seam only)
+  MCP_SNOWFLAKE_BASE_URL?: string;
+  MCP_NETSUITE_BASE_URL?: string;
+  MCP_DATABRICKS_BASE_URL?: string;
+  MCP_SHOPIFY_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;

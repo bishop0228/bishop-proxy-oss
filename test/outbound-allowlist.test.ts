@@ -152,3 +152,56 @@ describe("outbound-allowlist: §H-DYNAMIC BYOK expansion guards (2026-05-30)", (
     });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W38-S735 — per-account remote MCP enterprise-host pattern guards.
+//
+// The 4 per-account MCP vendor host shapes are anchored ENTERPRISE_HOST_PATTERNS
+// conjuncts (NOT exact-allowlist entries — length stays 74). The interceptor
+// backstop must admit a valid per-account host and reject every suffix-spoof.
+// (The /mcp route's spec-bound check — that a snowflake spec admits ONLY a
+// snowflake host — is exercised in mcp.test.ts.)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("outbound-allowlist: W38-S735 per-account MCP host pattern guards", () => {
+  const ENTERPRISE_OK = [
+    "acme-marketing.snowflakecomputing.com",
+    "1234567.suitetalk.api.netsuite.com",
+    "acme-store.myshopify.com",
+    "dbc-a1b2c3d4-e5f6.cloud.databricks.com",
+    "adb-984752964297111.11.azuredatabricks.net",
+    "1234567890123456.7.gcp.databricks.com",
+  ] as const;
+
+  for (const host of ENTERPRISE_OK) {
+    it(`11a: ${host} accepted by isAnchoredEnterpriseHost`, () => {
+      expect(isAnchoredEnterpriseHost(host)).toBe(true);
+    });
+  }
+
+  for (const host of ENTERPRISE_OK) {
+    it(`11b: ${host}.attacker.com suffix-spoof rejected`, () => {
+      expect(isAnchoredEnterpriseHost(`${host}.attacker.com`)).toBe(false);
+    });
+  }
+
+  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length stays 74)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(74);
+    for (const host of ENTERPRISE_OK) {
+      expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(host)).toBe(false);
+    }
+  });
+
+  it("11d: a bare-domain spoof of each vendor (no per-account label) is rejected", () => {
+    for (const bare of [
+      "snowflakecomputing.com",
+      "suitetalk.api.netsuite.com",
+      "myshopify.com",
+      "cloud.databricks.com",
+      "azuredatabricks.net",
+      "gcp.databricks.com",
+    ]) {
+      expect(isAnchoredEnterpriseHost(bare)).toBe(false);
+    }
+  });
+});

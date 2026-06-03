@@ -7,9 +7,15 @@
  *
  *   1. Bearer parse + AuthStoreDO /verify-token        (mirror byok step 1-2)
  *   2. server_id → MCP_SERVER_SPECS spec               (unknown → 404, no forward)
- *   3. host = spec.host  — SERVER-SIDE, never from the request (SSRF-safe);
- *      defense-in-depth asserts host ∈ ALLOWED_OUTBOUND_HOSTS (the fetch
- *      interceptor is the backstop) — refuse with 500 if it ever drifts.
+ *   3. host derive (SSRF-safe):
+ *        • FIXED-host spec: host = spec.host — SERVER-SIDE, never from the
+ *          request; defense-in-depth asserts host ∈ ALLOWED_OUTBOUND_HOSTS (the
+ *          fetch interceptor is the backstop) — refuse with 500 if it ever drifts.
+ *        • PER-ACCOUNT spec (W38-S735): host = X-Bishop-Upstream-Host (daemon-
+ *          supplied), admitted ONLY when it matches THIS spec's OWN anchored
+ *          vendor pattern (spec.hostPattern — spec-bind, SSRF-bounded to the
+ *          vendor domain). Missing header → 400; pattern mismatch → 400; never
+ *          a forward to a non-matching host.
  *   4. rebuild upstream Bearer auth from x-bishop-upstream-key (missing → 400);
  *      all client identifiers stripped (Pillar 1 — only content-type + accept
  *      forwarded so the upstream can negotiate SSE).
@@ -19,8 +25,11 @@
  *   7. emitResponse — metadata-only ProxyLogEvent (request_id + token_id +
  *      status). The upstream key and the JSON-RPC body are NEVER logged (Pillar 1).
  *
- * upstream host = spec.host (frozen allowlist) unless env[spec.baseUrlVar]
- * overrides for test environments. NEVER derived from the inbound request.
+ * upstream host = spec.host (frozen allowlist) for fixed-host servers, or the
+ * pattern-validated X-Bishop-Upstream-Host for per-account servers (W38-S735),
+ * unless env[spec.baseUrlVar] overrides for test environments. A fixed-host
+ * server's host is NEVER derived from the inbound request; a per-account host is
+ * daemon-supplied + anchored-pattern-validated + spec-bound (§3.2).
  */
 
 import type { Env } from "../index";
@@ -114,13 +123,37 @@ export async function handleMcp(
   const record = verify.record;
   const tokenId = record.token_id;
 
-  // Step 3 — SSRF-safe host derive. spec.host is the SOLE source — never the
-  // request. Defense-in-depth: assert it is in the static allowlist (the fetch
-  // interceptor is the runtime backstop). A spec whose host is not allow-listed
-  // is a config error and fails closed, NOT a silent forward.
-  if (!(ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(spec.host)) {
-    emitError(requestId, ip, requestSize, 500, "mcp_host_not_allowed", startedAt, tokenId);
-    return jsonError(500, "mcp_host_not_allowed");
+  // Step 3 — SSRF-safe host derive.
+  //  • FIXED-host spec: spec.host is the SOLE source — never the request.
+  //    Defense-in-depth: assert it ∈ the static allowlist (the fetch interceptor
+  //    is the runtime backstop). A spec whose host is not allow-listed is a
+  //    config error and fails closed (500), NOT a silent forward.
+  //  • PER-ACCOUNT spec (W38-S735): the host arrives in X-Bishop-Upstream-Host
+  //    (daemon-supplied) and is admitted ONLY when it matches THIS spec's OWN
+  //    anchored vendor pattern (spec.hostPattern — spec-bind: a snowflake spec
+  //    admits only *.snowflakecomputing.com, never another vendor's valid host).
+  //    Missing header → 400; pattern mismatch → 400 (fail-closed, NO forward).
+  //    §3.2: per-account host — anchored-pattern-validated, see
+  //    strongest_claims_security.md §3.2.
+  let upstreamHost: string;
+  if (spec.hostFromUpstream) {
+    const suppliedHost = (request.headers.get("x-bishop-upstream-host") ?? "").trim();
+    if (!suppliedHost) {
+      emitError(requestId, ip, requestSize, 400, "mcp_upstream_host_missing", startedAt, tokenId);
+      return jsonError(400, "mcp_upstream_host_missing");
+    }
+    const patterns = spec.hostPattern ?? [];
+    if (!patterns.some((re) => re.test(suppliedHost))) {
+      emitError(requestId, ip, requestSize, 400, "mcp_host_not_allowed", startedAt, tokenId);
+      return jsonError(400, "mcp_host_not_allowed");
+    }
+    upstreamHost = suppliedHost;
+  } else {
+    if (!spec.host || !(ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(spec.host)) {
+      emitError(requestId, ip, requestSize, 500, "mcp_host_not_allowed", startedAt, tokenId);
+      return jsonError(500, "mcp_host_not_allowed");
+    }
+    upstreamHost = spec.host;
   }
 
   // Step 4 — entitlement gate: rebuild upstream auth from x-bishop-upstream-key.
@@ -161,7 +194,7 @@ export async function handleMcp(
   const rawBody = await request.text();
   const upstreamHeaders = rebuildMcpHeaders(request.headers, upstreamKey);
   const baseUrl = (env as Record<string, string | undefined>)[spec.baseUrlVar]
-    ?? `https://${spec.host}`;
+    ?? `https://${upstreamHost}`;
   const searchSuffix = url.search || "";
   const upstream = await fetchWithRetry(
     `${baseUrl}${spec.pathPrefix}${derivedPath.replace(/^\//, "")}${searchSuffix}`,

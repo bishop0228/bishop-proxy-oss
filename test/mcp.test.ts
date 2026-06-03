@@ -15,7 +15,7 @@
  *   (8) SSRF unit — spec.host is server-side/frozen and ∈ ALLOWED_OUTBOUND_HOSTS.
  */
 
-import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
 import { ALLOWED_OUTBOUND_HOSTS } from "../src/lib/outbound-allowlist";
@@ -422,7 +422,7 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
     expect(spec.host).toBe("api.githubcopilot.com");
     // The map is frozen — a request can never mutate or inject a host.
     expect(Object.isFrozen(MCP_SERVER_SPECS)).toBe(true);
-    expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(spec.host)).toBe(true);
+    expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(spec.host as string)).toBe(true);
     // Unknown server_id has no spec → handler refuses (probe 2) — no host fallback.
     expect(MCP_SERVER_SPECS["evilserver"]).toBeUndefined();
   });
@@ -438,35 +438,48 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 // W38-S734 unwired 7 (granola/fireflies/fathom + zapier/make/ifttt/workato) → 43.
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe("W38-S731 Block 4 — MCP specs wired + allowlisted (all 43)", () => {
+describe("W38-S731 Block 4 — MCP specs wired + allowlisted (47: 43 fixed + 4 per-account)", () => {
   const allow = new Set<string>(ALLOWED_OUTBOUND_HOSTS as readonly string[]);
   const entries = Object.entries(MCP_SERVER_SPECS);
+  const fixedEntries = entries.filter(([, s]) => !s.hostFromUpstream);
+  const perAccountEntries = entries.filter(([, s]) => s.hostFromUpstream);
 
-  it("MCP_SERVER_SPECS has 43 entries (github + 42 Block-4 servers) and is frozen", () => {
-    expect(entries.length).toBe(43);
+  it("MCP_SERVER_SPECS has 47 entries (43 fixed-host + 4 per-account) and is frozen", () => {
+    expect(entries.length).toBe(47);
+    expect(fixedEntries.length).toBe(43);   // github + 42 Block-4 fixed-host
+    expect(perAccountEntries.length).toBe(4); // W38-S735 snowflake/netsuite/databricks/shopify
     expect(Object.isFrozen(MCP_SERVER_SPECS)).toBe(true);
   });
 
-  it("the 5 per-tenant/templated servers are NOT wired (deferred)", () => {
-    for (const sid of [
-      "snowflake",
-      "salesforce",
-      "microsoft-365",
-      "onedrive-sharepoint",
-      "netsuite",
-    ]) {
+  it("the 3 still-deferred per-tenant/templated servers are NOT wired", () => {
+    // W38-S735 wired snowflake/netsuite (+ databricks/shopify) per-account; the
+    // remaining templated servers stay deferred (no spec).
+    for (const sid of ["salesforce", "microsoft-365", "onedrive-sharepoint"]) {
       expect(MCP_SERVER_SPECS[sid]).toBeUndefined();
     }
   });
 
-  for (const [sid, spec] of entries) {
+  it("the 4 W38-S735 per-account servers are wired as per-account (no frozen host)", () => {
+    for (const sid of ["snowflake", "netsuite", "databricks", "shopify"]) {
+      const spec = MCP_SERVER_SPECS[sid];
+      expect(spec).toBeDefined();
+      expect(spec.hostFromUpstream).toBe(true);
+      expect(spec.host).toBeUndefined();          // never a frozen host
+      expect(Array.isArray(spec.hostPattern)).toBe(true);
+      expect((spec.hostPattern ?? []).length).toBeGreaterThanOrEqual(1);
+    }
+    // databricks is multi-cloud — 3 anchored patterns (AWS/Azure/GCP).
+    expect(MCP_SERVER_SPECS["databricks"].hostPattern?.length).toBe(3);
+  });
+
+  for (const [sid, spec] of fixedEntries) {
     it(`${sid}: host ∈ ALLOWED_OUTBOUND_HOSTS, single static host, valid pathPrefix`, () => {
       // (a) host is on the egress allowlist (else route step 3 → 500).
-      expect(allow.has(spec.host)).toBe(true);
+      expect(allow.has(spec.host as string)).toBe(true);
       // (b) single static DNS host — no SSRF / template / path smuggled in.
-      expect(/^[a-z0-9.-]+$/.test(spec.host)).toBe(true);
+      expect(/^[a-z0-9.-]+$/.test(spec.host as string)).toBe(true);
       for (const ch of ["{", "}", "<", ">", "*", "/", ":", " "]) {
-        expect(spec.host.includes(ch)).toBe(false);
+        expect((spec.host as string).includes(ch)).toBe(false);
       }
       // (c) pathPrefix is "" or rooted ("/..."); https://host+pathPrefix parses
       // and its origin is exactly the frozen host (no host smuggled via path).
@@ -478,4 +491,168 @@ describe("W38-S731 Block 4 — MCP specs wired + allowlisted (all 43)", () => {
       expect(spec.baseUrlVar).toMatch(/^MCP_[A-Z0-9_]+_BASE_URL$/);
     });
   }
+
+  for (const [sid, spec] of perAccountEntries) {
+    it(`${sid}: per-account spec is host-free + carries anchored spec-bound pattern(s)`, () => {
+      // (a) NO frozen host, NO host smuggled into the allowlist.
+      expect(spec.host).toBeUndefined();
+      expect(spec.hostFromUpstream).toBe(true);
+      // (b) every bound pattern is fully anchored (^…$) — no .*, no `i` flag.
+      const patterns = spec.hostPattern ?? [];
+      expect(patterns.length).toBeGreaterThanOrEqual(1);
+      for (const re of patterns) {
+        expect(re.source.startsWith("^")).toBe(true);
+        expect(re.source.endsWith("$")).toBe(true);
+        expect(re.source.includes(".*")).toBe(false);
+        expect(re.flags.includes("i")).toBe(false);
+      }
+      // (c) pathPrefix rooted; bearer auth + test-seam env var name.
+      expect(spec.pathPrefix === "" || spec.pathPrefix.startsWith("/")).toBe(true);
+      expect(spec.authStyle).toBe("bearer");
+      expect(spec.baseUrlVar).toMatch(/^MCP_[A-Z0-9_]+_BASE_URL$/);
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W38-S735 — per-account host derivation negative-security suite.
+//
+// The per-account host arrives daemon-supplied (X-Bishop-Upstream-Host) and is
+// SSRF-bounded by the spec's OWN anchored vendor pattern (spec-bind). The route
+// must: forward a valid host to EXACTLY that host; refuse an out-of-pattern host,
+// a suffix-spoof, a DIFFERENT vendor's valid host on this spec, and a missing
+// header — all WITHOUT forwarding. Unit-style (handleMcp + stubbed global fetch):
+// the upstream forward is captured so we can assert the exact host, and the
+// no-forward legs assert fetch was never called.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("W38-S735 per-account host derivation (/mcp/<per-account server>)", () => {
+  const DAEMON_BEARER = "bsk_staging_" + "v".repeat(24);
+
+  // Valid per-account hosts (one per vendor + each databricks cloud).
+  const SNOWFLAKE_OK = "acme-marketing.snowflakecomputing.com";
+  const NETSUITE_OK = "1234567.suitetalk.api.netsuite.com";
+  const SHOPIFY_OK = "acme-store.myshopify.com";
+  const DATABRICKS_AWS_OK = "dbc-a1b2c3d4-e5f6.cloud.databricks.com";
+  const DATABRICKS_AZURE_OK = "adb-984752964297111.11.azuredatabricks.net";
+  const DATABRICKS_GCP_OK = "1234567890123456.7.gcp.databricks.com";
+
+  function perAccountReq(serverId: string, upstreamHost: string | null): Request {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      authorization: `Bearer ${DAEMON_BEARER}`,
+      "x-bishop-upstream-key": UPSTREAM_KEY,
+    };
+    if (upstreamHost !== null) headers["x-bishop-upstream-host"] = upstreamHost;
+    return new Request(`http://proxy/mcp/${serverId}`, {
+      method: "POST",
+      headers,
+      body: TEST_BODY,
+    });
+  }
+
+  let capturedUrl: string | null;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    capturedUrl = null;
+    mockFetch = vi.fn(async (input: RequestInfo | URL) => {
+      capturedUrl = input instanceof Request ? input.url : String(input);
+      return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function expectForwardsToHost(serverId: string, host: string) {
+    const resp = await handleMcp(perAccountReq(serverId, host), makeAllowEnv(), makeCtx());
+    expect(resp.status).toBe(200);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    // No base-URL override env is set for these → baseUrl = https://<validated>,
+    // so the captured upstream URL host is EXACTLY the daemon-supplied host.
+    expect(new URL(capturedUrl as string).hostname).toBe(host);
+  }
+
+  async function expectRefused(serverId: string, host: string | null, errorCode: string) {
+    const resp = await handleMcp(perAccountReq(serverId, host), makeAllowEnv(), makeCtx());
+    expect(resp.status).toBe(400);
+    const body = (await resp.json()) as { error: string };
+    expect(body.error).toBe(errorCode);
+    expect(mockFetch).not.toHaveBeenCalled(); // NO forward on a refusal
+  }
+
+  // ── ★ valid host → forwards to EXACTLY that host (no arbitrary reachability) ──
+  it("★ snowflake: valid host forwards to exactly that host", async () => {
+    await expectForwardsToHost("snowflake", SNOWFLAKE_OK);
+  });
+  it("★ netsuite: valid host forwards to exactly that host", async () => {
+    await expectForwardsToHost("netsuite", NETSUITE_OK);
+  });
+  it("★ shopify: valid host forwards to exactly that host", async () => {
+    await expectForwardsToHost("shopify", SHOPIFY_OK);
+  });
+  it("★ databricks: valid AWS host forwards to exactly that host", async () => {
+    await expectForwardsToHost("databricks", DATABRICKS_AWS_OK);
+  });
+  it("★ databricks: valid Azure host forwards to exactly that host", async () => {
+    await expectForwardsToHost("databricks", DATABRICKS_AZURE_OK);
+  });
+  it("★ databricks: valid GCP host forwards to exactly that host", async () => {
+    await expectForwardsToHost("databricks", DATABRICKS_GCP_OK);
+  });
+
+  // ── ★ out-of-pattern host → refused, no forward ──────────────────────────────
+  it("★ snowflake: out-of-pattern host (evil.com) → 400 mcp_host_not_allowed, no forward", async () => {
+    await expectRefused("snowflake", "evil.com", "mcp_host_not_allowed");
+  });
+  it("★ snowflake: suffix-spoof host → 400 mcp_host_not_allowed, no forward", async () => {
+    await expectRefused("snowflake", "acme.snowflakecomputing.com.attacker.com", "mcp_host_not_allowed");
+  });
+  it("★ databricks: a non-databricks host → 400 mcp_host_not_allowed, no forward", async () => {
+    await expectRefused("databricks", SNOWFLAKE_OK, "mcp_host_not_allowed");
+  });
+
+  // ── ★ wrong-vendor-but-valid-pattern → refused (SPEC-BIND) ───────────────────
+  it("★ spec-bind: a netsuite-valid host on the snowflake spec → 400, no forward", async () => {
+    await expectRefused("snowflake", NETSUITE_OK, "mcp_host_not_allowed");
+  });
+  it("★ spec-bind: a snowflake-valid host on the netsuite spec → 400, no forward", async () => {
+    await expectRefused("netsuite", SNOWFLAKE_OK, "mcp_host_not_allowed");
+  });
+  it("★ spec-bind: a shopify-valid host on the databricks spec → 400, no forward", async () => {
+    await expectRefused("databricks", SHOPIFY_OK, "mcp_host_not_allowed");
+  });
+
+  // ── ★ missing X-Bishop-Upstream-Host → refused, no forward ───────────────────
+  it("★ snowflake: missing X-Bishop-Upstream-Host → 400 mcp_upstream_host_missing, no forward", async () => {
+    await expectRefused("snowflake", null, "mcp_upstream_host_missing");
+  });
+  it("★ shopify: missing X-Bishop-Upstream-Host → 400 mcp_upstream_host_missing, no forward", async () => {
+    await expectRefused("shopify", null, "mcp_upstream_host_missing");
+  });
+
+  // ── spec-bind, pure-regex: each spec's pattern admits ONLY its vendor ─────────
+  it("spec-bind invariant: each vendor pattern rejects the other vendors' valid hosts", () => {
+    const okByVendor: Record<string, string> = {
+      snowflake: SNOWFLAKE_OK,
+      netsuite: NETSUITE_OK,
+      shopify: SHOPIFY_OK,
+    };
+    for (const [sid, ownHost] of Object.entries(okByVendor)) {
+      const patterns = MCP_SERVER_SPECS[sid].hostPattern ?? [];
+      // Own host matches at least one of the spec's bound patterns…
+      expect(patterns.some((re) => re.test(ownHost))).toBe(true);
+      // …and NO other vendor's valid host matches this spec.
+      for (const [otherSid, otherHost] of Object.entries(okByVendor)) {
+        if (otherSid === sid) continue;
+        expect(patterns.some((re) => re.test(otherHost))).toBe(false);
+      }
+    }
+  });
 });
