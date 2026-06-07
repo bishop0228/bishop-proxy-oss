@@ -8,6 +8,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -72,7 +73,7 @@ export async function handleVertexToken(
   );
 
   const baseUrl =
-    (env as Record<string, string | undefined>)[VERTEX_TOKEN_UPSTREAM.tokenBaseUrlVar] ??
+    envVar(env, VERTEX_TOKEN_UPSTREAM.tokenBaseUrlVar) ??
     `https://${VERTEX_TOKEN_UPSTREAM.tokenHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${VERTEX_TOKEN_UPSTREAM.tokenPath}`, {
     method: "POST",

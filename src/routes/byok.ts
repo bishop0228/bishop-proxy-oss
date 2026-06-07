@@ -18,6 +18,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import { resolveUpstreamKey, rebuildByokHeaders } from "../lib/headers";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
@@ -191,7 +192,7 @@ export async function handleByok(
 
   // Step 6 — entitlement gate (fail-closed). Managed → operator key from env[spec.operatorKeyVar].
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
-  const operatorKey = (env as Record<string, string | undefined>)[spec.operatorKeyVar] ?? null;
+  const operatorKey = envVar(env, spec.operatorKeyVar) ?? null;
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, operatorKey);
   if (!keyResolution.ok) {
     emitError(requestId, ip, requestSize, 400, keyResolution.reason, startedAt, tokenId);
@@ -200,7 +201,7 @@ export async function handleByok(
   const upstreamHeaders = rebuildByokHeaders(request.headers, keyResolution.key);
 
   // Step 7 — upstream fetch. Host derived from spec (frozen allowlist), never from request.
-  const baseUrl = (env as Record<string, string | undefined>)[spec.baseUrlVar] ?? `https://${spec.upstreamHost}`;
+  const baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${spec.upstreamHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${derivedPath}`, {
     method: "POST",
     headers: upstreamHeaders,

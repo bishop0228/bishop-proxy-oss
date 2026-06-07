@@ -22,6 +22,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import { resolveUpstreamKey, rebuildByokHeaders } from "../lib/headers";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
@@ -212,7 +213,7 @@ export async function handleOAuthCompletion(
   }
 
   // Step 7 — upstream fetch. Path is FIXED per spec (never derived from inbound request).
-  const baseUrl = (env as Record<string, string | undefined>)[spec.completionBaseUrlVar] ?? `https://${spec.completionHost}`;
+  const baseUrl = envVar(env, spec.completionBaseUrlVar) ?? `https://${spec.completionHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${spec.completionPath}`, {
     method: "POST",
     headers: upstreamHeaders,
@@ -308,7 +309,7 @@ export async function handleOAuthToken(
     request.headers.get("content-type") ?? "application/x-www-form-urlencoded",
   );
 
-  const baseUrl = (env as Record<string, string | undefined>)[spec.tokenBaseUrlVar] ?? `https://${spec.tokenHost}`;
+  const baseUrl = envVar(env, spec.tokenBaseUrlVar) ?? `https://${spec.tokenHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${spec.tokenPath}`, {
     method: "POST",
     headers: upstreamHeaders,

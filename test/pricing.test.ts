@@ -55,6 +55,7 @@ describe("computeCostCents", () => {
       input_tokens: 1_000_000,
       output_tokens: 0,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(25);
   });
@@ -64,6 +65,7 @@ describe("computeCostCents", () => {
       input_tokens: 1_000_000,
       output_tokens: 1_000_000,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(1800);
   });
@@ -73,6 +75,7 @@ describe("computeCostCents", () => {
       input_tokens: 0,
       output_tokens: 0,
       cached_tokens: 1_000_000,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(3);
   });
@@ -82,6 +85,7 @@ describe("computeCostCents", () => {
       input_tokens: 0,
       output_tokens: 0,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(0);
   });
@@ -91,6 +95,7 @@ describe("computeCostCents", () => {
       input_tokens: 1,
       output_tokens: 0,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(1);
   });
@@ -103,6 +108,7 @@ describe("computeCostCents", () => {
       input_tokens: 100_000,
       output_tokens: 100_000,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(15);
   });
@@ -112,6 +118,7 @@ describe("computeCostCents", () => {
       input_tokens: 1_000_000,
       output_tokens: 1_000_000,
       cached_tokens: 0,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(9000);
   });
@@ -121,6 +128,7 @@ describe("computeCostCents", () => {
       input_tokens: 0,
       output_tokens: 0,
       cached_tokens: 1_000_000,
+      cache_creation_input_tokens: 0,
     });
     expect(c).toBe(150);
   });

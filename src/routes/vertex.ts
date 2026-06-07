@@ -15,6 +15,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
 import { VERTEX_UPSTREAM } from "../lib/vertex-spec";
@@ -215,7 +216,7 @@ export async function handleVertex(
   upstreamHeaders.set("content-type", contentType);
   upstreamHeaders.set("authorization", `Bearer ${accessToken}`);
 
-  const baseUrl = (env as Record<string, string | undefined>)[VERTEX_UPSTREAM.baseUrlVar]
+  const baseUrl = envVar(env, VERTEX_UPSTREAM.baseUrlVar)
     ?? `https://${vertexHost}`;
   const searchSuffix = url.search || "";
   const upstream = await fetchWithRetry(`${baseUrl}${derivedPath}${searchSuffix}`, {

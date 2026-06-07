@@ -15,6 +15,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
 import { BEDROCK_UPSTREAM } from "../lib/bedrock-spec";
@@ -224,7 +225,7 @@ export async function handleBedrock(
   upstreamHeaders.set("x-amz-date", amzDate);
   upstreamHeaders.set("authorization", authorization);
 
-  const baseUrl = (env as Record<string, string | undefined>)[BEDROCK_UPSTREAM.baseUrlVar]
+  const baseUrl = envVar(env, BEDROCK_UPSTREAM.baseUrlVar)
     ?? `https://${awsHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${derivedPath}`, {
     method: "POST",

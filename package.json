@@ -8,11 +8,13 @@
     "deploy:staging": "wrangler deploy --env staging",
     "dev": "wrangler dev",
     "pretest": "rm -rf .wrangler/state",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20251001.0",
+    "@types/node": "^25.9.2",
     "miniflare": "^4.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0",

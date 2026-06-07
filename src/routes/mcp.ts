@@ -38,6 +38,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import type { ProxyLogEvent } from "../lib/log";
 import { MCP_SERVER_SPECS } from "../lib/mcp-specs";
 import { ALLOWED_OUTBOUND_HOSTS } from "../lib/outbound-allowlist";
@@ -230,7 +231,7 @@ export async function handleMcp(
   // spec; SSE-capable (upstream .body streamed straight back).
   const rawBody = await request.text();
   const upstreamHeaders = rebuildMcpHeaders(request.headers, upstreamKey);
-  const baseUrl = (env as Record<string, string | undefined>)[spec.baseUrlVar]
+  const baseUrl = envVar(env, spec.baseUrlVar)
     ?? `https://${upstreamHost}`;
   const searchSuffix = url.search || "";
   const upstream = await fetchWithRetry(

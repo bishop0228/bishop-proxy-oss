@@ -15,6 +15,7 @@
  */
 
 import type { Env } from "../index";
+import { envVar } from "../lib/env-var";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
 import { AZURE_UPSTREAM } from "../lib/azure-spec";
@@ -215,7 +216,7 @@ export async function handleAzure(
   upstreamHeaders.set("content-type", contentType);
   upstreamHeaders.set("api-key", apiKey);
 
-  const baseUrl = (env as Record<string, string | undefined>)[AZURE_UPSTREAM.baseUrlVar]
+  const baseUrl = envVar(env, AZURE_UPSTREAM.baseUrlVar)
     ?? `https://${azureHost}`;
   const searchSuffix = url.search || "";
   const upstream = await fetchWithRetry(`${baseUrl}${derivedPath}${searchSuffix}`, {
