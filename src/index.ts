@@ -39,6 +39,7 @@ import { handleVertexToken } from "./routes/vertex-token";
 import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
 import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 import { handleMcp } from "./routes/mcp";
+import { handleModelRegistry } from "./routes/model-registry";
 
 export interface Env {
   TIER_CACHE: DurableObjectNamespace;
@@ -111,6 +112,8 @@ export interface Env {
   MCP_MICROSOFT_365_BASE_URL?: string;
   MCP_ONEDRIVE_SHAREPOINT_BASE_URL?: string;
   MCP_SALESFORCE_BASE_URL?: string;
+  // B1 governed model-registry egress base-URL override (test seam only)
+  OLLAMA_REGISTRY_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -242,6 +245,12 @@ export default {
     // §1.18.15 — MCP-forward egress route (operational, not inference).
     if (request.method === "POST" && url.pathname.startsWith("/mcp/")) {
       return handleMcp(request, env, ctx);
+    }
+
+    // B1 — governed model-registry egress (read-only GET; frozen Ollama registry
+    // host; operational, not inference).
+    if (request.method === "GET" && url.pathname.startsWith("/model-registry/")) {
+      return handleModelRegistry(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname.startsWith("/oauth/")) {

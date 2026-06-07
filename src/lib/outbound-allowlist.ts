@@ -18,7 +18,9 @@
  * completion legs: §1.17.19 added oauth2.googleapis.com (length→27); §H-DYNAMIC
  * (2026-05-30, founder-signed-off) adds 5 BYOK upstreams (length→32): api.cerebras.ai,
  * integrate.api.nvidia.com, gateway.ai.cloudflare.com, api.hunyuan.cloud.tencent.com,
- * ark.cn-beijing.volces.com. Ollama (local) NOT added — no proxy egress.
+ * ark.cn-beijing.volces.com. Ollama model INFERENCE (local) NOT added — no proxy
+ * egress for inference; but the Ollama model REGISTRY (registry.ollama.ai) IS added
+ * below (B1 governed model-registry egress — read-only GET, operational not inference).
  * Each pattern is fully anchored, single DNS label, lowercase-only, no `i` flag, no
  * .*, no unanchored alternation. Reviewed founder-approved 2026-05-29/2026-05-30.
  *
@@ -163,6 +165,14 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // MCP host (org via OAuth token, not the URL). EXACT-match (NOT patterns).
   "agent365.svc.cloud.microsoft",
   "api.salesforce.com",
+  // ── B1 (founder-approved): 1 governed model-registry egress host (length 76→77) ──
+  // The Ollama public model REGISTRY (read-only GET, reached only via the §3.2
+  // proxy /model-registry/ leg, src/routes/model-registry.ts). Operational egress,
+  // NOT model inference — no classifier/cost meter, only the flat abuse-bound quota.
+  // Frozen host; every redirect hop is re-checked against this allowlist (B2 daemon
+  // content-pin is the integrity backstop). Total now 77 = 32 provider + 44 MCP + 1
+  // model-registry.
+  "registry.ollama.ai",
 ] as const);
 
 /**

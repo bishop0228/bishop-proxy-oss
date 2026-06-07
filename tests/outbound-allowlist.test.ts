@@ -242,13 +242,16 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     // §1.17.19 Vertex SA-token mint — Google OAuth2 token endpoint
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("oauth2.googleapis.com");
     // W38-S731 Block 4 — spot-check a few of the 42 MCP egress hosts (W38-S734
-    // unwired 7 → native-covered) + W38-S736 +2 fixed-host (length 74→76).
+    // unwired 7 → native-covered) + W38-S736 +2 fixed-host (length 74→76)
+    // + B1 +1 model-registry host registry.ollama.ai (length 76→77).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp.notion.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp.stripe.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("mcp-us.zoom.us");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("agent365.svc.cloud.microsoft");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.salesforce.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(76);
+    // B1 governed model-registry egress host (read-only GET, /model-registry/ leg).
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("registry.ollama.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(77);
   });
 });
 

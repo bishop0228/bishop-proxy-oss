@@ -1,17 +1,18 @@
 /**
  * Interceptor-level floor-change guards for §1.17.18/§1.17.19 (ENTERPRISE_HOST_PATTERNS)
  * and §H-DYNAMIC 2026-05-30 (5 new BYOK upstream hosts) + W38-S731 Block 4
- * (42 remote MCP egress hosts) + W38-S736 (+2 fixed-host MCP egress, length 74→76).
+ * (42 remote MCP egress hosts) + W38-S736 (+2 fixed-host MCP egress, length 74→76)
+ * + B1 (+1 model-registry egress host registry.ollama.ai, length 76→77).
  *
  * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
- *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 76 — 32 provider + 44 MCP egress
+ *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry
  *
  * §1.17.19 Vertex guards:
  *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
  *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
- *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 76 — 32 provider + 44 MCP egress
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry
  *
  * §H-DYNAMIC BYOK expansion guards (founder-signed-off 2026-05-30):
  *   (10a) Each of 5 new hosts is in ALLOWED_OUTBOUND_HOSTS
@@ -81,8 +82,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 76 — 32 provider + 44 MCP egress (W38-S736 +2 fixed-host)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(76);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry (B1 +1)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -102,8 +103,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 76 — 32 provider + 44 MCP egress (exact-match)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(76);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
   });
 });
 
@@ -158,7 +159,7 @@ describe("outbound-allowlist: §H-DYNAMIC BYOK expansion guards (2026-05-30)", (
 //
 // The 4 per-account MCP vendor host shapes are anchored ENTERPRISE_HOST_PATTERNS
 // conjuncts (NOT exact-allowlist entries — they add nothing to the exact length;
-// the length is 76 after W38-S736's +2 fixed-host exact-match adds). The interceptor
+// the length is 77 after B1's +1 model-registry exact-match add). The interceptor
 // backstop must admit a valid per-account host and reject every suffix-spoof.
 // (The /mcp route's spec-bound check — that a snowflake spec admits ONLY a
 // snowflake host — is exercised in mcp.test.ts.)
@@ -186,8 +187,8 @@ describe("outbound-allowlist: W38-S735 per-account MCP host pattern guards", () 
     });
   }
 
-  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 76 = exact-match only)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(76);
+  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 77 = exact-match only)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
     for (const host of ENTERPRISE_OK) {
       expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(host)).toBe(false);
     }
