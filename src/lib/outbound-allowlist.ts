@@ -283,6 +283,31 @@ export function installFetchAllowlist(): void {
 }
 
 /**
+ * The §3.2 leg-4 (sandboxed-browser egress) raw-forward seam.
+ *
+ * Returns the pre-install (un-intercepted) fetch so the `/browser-egress` route
+ * (src/routes/browser-egress.ts) can reach an SSRF-validated PUBLIC host that
+ * is — BY DESIGN — not on the static ALLOWED_OUTBOUND_HOSTS allowlist. This is
+ * the ONE sanctioned bypass of the no-exfiltration interceptor and exists SOLELY
+ * for the sandboxed-browser class: the caller (a VM-isolated, data-empty browser
+ * worker, per strongest_claims_security.md §3.2 leg 4) reaches the open web it is
+ * directed to. The data-residency guarantee holds for THIS leg by VM isolation +
+ * SSRF-gating rather than by allowlisting (which a general browser cannot
+ * express). The CALLER MUST SSRF-gate the URL first (browser-egress.ts
+ * `isPublicHttpUrl`) — this function performs NO host check. Every OTHER (host-
+ * fixed) leg still flows through the intercepted globalThis.fetch, so the
+ * no-exfiltration backstop is unchanged for them. Before installFetchAllowlist
+ * has run there is no captured fetch, so this falls back to the live global
+ * fetch (in production the interceptor is installed before any route dispatch).
+ *
+ * Modifying this seam or its single caller requires explicit security review
+ * (it is the only allowlist bypass in the codebase — the Anchor carve).
+ */
+export function rawBrowserEgressFetch(): FetchFn {
+  return _preInstallFetch ?? (globalThis as unknown as { fetch: FetchFn }).fetch;
+}
+
+/**
  * For testing only: replaces the runtime allowlist. Never call from production
  * code. Callers must include "api.anthropic.com" if they want standard traffic
  * to pass through.

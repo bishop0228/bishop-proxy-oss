@@ -41,6 +41,7 @@ import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 import { handleMcp } from "./routes/mcp";
 import { handleModelRegistry } from "./routes/model-registry";
 import { handleEgress } from "./routes/egress";
+import { handleBrowserEgress } from "./routes/browser-egress";
 
 export interface Env {
   TIER_CACHE: DurableObjectNamespace;
@@ -221,6 +222,14 @@ export default {
     // SSRF-safe — the W9.7 /mcp/<server_id> discipline).
     if (request.method === "POST" && url.pathname.startsWith("/egress/")) {
       return handleEgress(request, env, ctx);
+    }
+    // W38-S827 (S5c-3b) — the §3.2 leg-4 sandboxed-browser egress route. UNLIKE
+    // /egress/<server_id> (host server-side from a frozen spec), the destination
+    // is REQUEST-determined (the open web the browser is driven to) — made safe
+    // by VM isolation (the browser holds no user data) + SSRF-gating, not by an
+    // allowlist. See strongest_claims_security.md §3.2 leg 4.
+    if (request.method === "POST" && url.pathname === "/browser-egress") {
+      return handleBrowserEgress(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
       return handleTierBind(request, env);
