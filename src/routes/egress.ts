@@ -1,38 +1,47 @@
 /**
- * POST /v1/egress — generic allowlist-gated forward egress route (W38-S822, S5b-1).
+ * POST /egress/<server_id> — server_id-keyed generic forward egress route
+ * (W38-S822-FIX, S5b-1). §3.2-aligned: the upstream host is derived SERVER-SIDE
+ * from a frozen spec, NEVER from the request.
  *
  * The §3.2-preserving channel a Bishop worker-microVM reaches the outside world
  * through: the (separate) vsock host-relay (S5b-2) forwards a guest's outbound
- * request here, and the proxy forwards it on — but ONLY to a host already on the
- * frozen, founder-reviewed ALLOWED_OUTBOUND_HOSTS allowlist. All worker egress
- * still flows through proxy.mybishop.ai, and the allowlist remains the boundary.
+ * request here, and the proxy forwards it on — but ONLY to the host bound to the
+ * server_id in the path, exactly like the W9.7 /mcp/<server_id> leg. All worker
+ * egress still flows through proxy.mybishop.ai, and the frozen
+ * CLASS_B_EGRESS_SPECS table is the host boundary.
  *
- * Unlike the per-provider inference legs (which hardcode the upstream host + do
- * provider auth/transform), this is a GENERIC forward: the worker says WHERE via
- * the X-Bishop-Egress-Target header, bounded by the allowlist. The body is an
- * opaque byte pass-through (no parse, no classifier, no cost meter) — operational
- * egress, not model inference, so quota is a flat abuse-bound weight of 1.
+ * The worker NEVER names the host. The server_id (the path) determines it: a
+ * (compromised) worker can reach ONLY its own spec's host, not any other
+ * allowlisted host — the cross-server egress / SSRF pattern §3.2 deliberately
+ * avoids. Unlike the per-provider inference legs, this is a GENERIC forward — the
+ * body is an opaque byte pass-through (no parse, no classifier, no cost meter),
+ * so quota is a flat abuse-bound weight of 1.
  *
- *   1. target derive — X-Bishop-Egress-Target (a control header, NEVER the body).
- *      Absent / unparseable / non-http(s) → 400, NO forward.
+ *   1. server_id → CLASS_B_EGRESS_SPECS spec (unknown → 404, NO forward — the
+ *      fast-fail happens BEFORE any fetch, so no retry-budget delay).
  *   2. Bearer parse + AuthStoreDO /verify-token            (mirror chat-completions).
- *   3. flat-weight quota /check (abuse-bound, weight 1, cost 0 — not inference).
- *   4. forward — fetchWithRetry(target, { method, headers: <Bishop auth + ALL
- *      X-Bishop-* control headers STRIPPED, Pillar 1>, body }). The installed
- *      installFetchAllowlist() AUTO-rejects a non-allowlisted target by throwing
- *      OutboundHostNotAllowed — caught here → 403 with a generic message (the
- *      allowlist contents are NEVER leaked). No manual host-check: the frozen
- *      allowlist is the single seal.
- *   5. emitResponse — metadata-only ProxyLogEvent (request_id + token_id +
+ *   3. host derive (SSRF-safe):
+ *        • FIXED-host spec: host = spec.host — SERVER-SIDE, never from the
+ *          request; defense-in-depth asserts host ∈ ALLOWED_OUTBOUND_HOSTS (the
+ *          fetch interceptor is the backstop) → 500 if it ever drifts.
+ *        • PER-ACCOUNT spec: host = X-Bishop-Upstream-Host (daemon-supplied),
+ *          admitted ONLY when it matches THIS spec's OWN anchored hostPattern
+ *          (spec-bind). Missing → 400; mismatch → 400 (fail-closed, NO forward).
+ *   4. flat-weight quota /check (abuse-bound, weight 1, cost 0 — not inference).
+ *   5. forward — fetchWithRetry(<host from spec + path>, { method, headers: <Bishop
+ *      auth + ALL X-Bishop-* control headers STRIPPED, Pillar 1>, body }). The
+ *      installed installFetchAllowlist() is the runtime backstop.
+ *   6. emitResponse — metadata-only ProxyLogEvent (request_id + token_id +
  *      status). The daemon Bearer and the body are NEVER logged (Pillar 1).
  *
- * NO host is added here — the route forwards only to already-allowlisted hosts
- * and 403s everything else. The Class B worker host-adds are per-worker in S5c
+ * NO real Class B host is added here — the per-worker host-adds are S5c
  * (founder-reviewed, like the W9.7 per-account/fixed-host arcs). Mechanism first.
  */
 
 import type { Env } from "../index";
-import { OutboundHostNotAllowed } from "../lib/outbound-allowlist";
+import { envVar } from "../lib/env-var";
+import { CLASS_B_EGRESS_SPECS } from "../lib/class-b-egress-specs";
+import { ALLOWED_OUTBOUND_HOSTS } from "../lib/outbound-allowlist";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -52,13 +61,10 @@ interface VerifyTokenResult {
   reason: "not_found" | "revoked" | "expired" | null;
 }
 
-/** The control header that carries the worker's intended egress target URL. */
-const EGRESS_TARGET_HEADER = "x-bishop-egress-target";
-
 /**
  * Rebuild upstream headers for the generic forward. STRIP (Pillar 1):
  *   • authorization — the daemon Bearer (verified here; NEVER leaked upstream),
- *   • every x-bishop-* control header (incl. X-Bishop-Egress-Target itself), and
+ *   • every x-bishop-* control header (incl. X-Bishop-Upstream-Host), and
  *   • the hop-by-hop host/content-length (recomputed by the runtime fetch).
  * Everything else survives byte-for-byte — a worker that needs upstream auth
  * carries it in a non-Bishop header (e.g. its own x-api-key), which passes through.
@@ -85,24 +91,18 @@ export async function handleEgress(
   const requestSize = Number(request.headers.get("content-length") ?? "0");
   const ip = ip24From(request);
 
-  // Step 1 — target from the request (control header, never the body). Reject an
-  // absent / unparseable / non-http(s) target with NO forward.
-  const rawTarget = (request.headers.get(EGRESS_TARGET_HEADER) ?? "").trim();
-  if (!rawTarget) {
-    emitError(requestId, ip, requestSize, 400, "egress_target_missing", startedAt);
-    return jsonError(400, "egress_target_missing");
+  // Step 1 — server_id → frozen spec. The host comes from the spec, NEVER the
+  // request (SSRF-safe). Unknown server_id → 404, NO forward — and the fast-fail
+  // happens BEFORE any fetch, so there is no fetchWithRetry retry-budget delay.
+  const url = new URL(request.url);
+  const parts = url.pathname.split("/"); // ["", "egress", "<server_id>", ...]
+  const serverId = parts[2] ?? "";
+  const spec = CLASS_B_EGRESS_SPECS[serverId];
+  if (!spec) {
+    emitError(requestId, ip, requestSize, 404, "unknown_egress_server", startedAt);
+    return jsonError(404, "unknown_egress_server");
   }
-  let target: URL;
-  try {
-    target = new URL(rawTarget);
-  } catch {
-    emitError(requestId, ip, requestSize, 400, "egress_target_invalid", startedAt);
-    return jsonError(400, "egress_target_invalid");
-  }
-  if (target.protocol !== "https:" && target.protocol !== "http:") {
-    emitError(requestId, ip, requestSize, 400, "egress_target_invalid", startedAt);
-    return jsonError(400, "egress_target_invalid");
-  }
+  const derivedPath = "/" + parts.slice(3).join("/");
 
   // Step 2 — Bearer parsing.
   const auth = request.headers.get("authorization") ?? "";
@@ -131,7 +131,38 @@ export async function handleEgress(
   }
   const tokenId = verify.record.token_id;
 
-  // Step 3 — tier read + flat-weight quota /check (abuse-bound; no cost meter —
+  // Step 3 — SSRF-safe host derive (mirror /mcp step 3).
+  //  • FIXED-host spec: spec.host is the SOLE source — never the request.
+  //    Defense-in-depth: assert it ∈ the static allowlist (the fetch interceptor
+  //    is the runtime backstop). A spec whose host is not allow-listed is a config
+  //    error and fails closed (500), NOT a silent forward.
+  //  • PER-ACCOUNT spec: the host arrives in X-Bishop-Upstream-Host (daemon-
+  //    supplied) and is admitted ONLY when it matches THIS spec's OWN anchored
+  //    pattern (spec.hostPattern — spec-bind). Missing → 400; mismatch → 400
+  //    (fail-closed, NO forward). §3.2: per-account host — anchored-pattern-
+  //    validated, see strongest_claims_security.md §3.2.
+  let upstreamHost: string;
+  if (spec.hostFromUpstream) {
+    const suppliedHost = (request.headers.get("x-bishop-upstream-host") ?? "").trim();
+    if (!suppliedHost) {
+      emitError(requestId, ip, requestSize, 400, "egress_upstream_host_missing", startedAt, tokenId);
+      return jsonError(400, "egress_upstream_host_missing");
+    }
+    const patterns = spec.hostPattern ?? [];
+    if (!patterns.some((re) => re.test(suppliedHost))) {
+      emitError(requestId, ip, requestSize, 400, "egress_host_not_allowed", startedAt, tokenId);
+      return jsonError(400, "egress_host_not_allowed");
+    }
+    upstreamHost = suppliedHost;
+  } else {
+    if (!spec.host || !(ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(spec.host)) {
+      emitError(requestId, ip, requestSize, 500, "egress_host_not_allowed", startedAt, tokenId);
+      return jsonError(500, "egress_host_not_allowed");
+    }
+    upstreamHost = spec.host;
+  }
+
+  // Step 4 — tier read + flat-weight quota /check (abuse-bound; no cost meter —
   // generic egress is not model inference).
   const tier = await readTier(env, tokenId);
   const quotaStub = env.QUOTA_STORE.get(env.QUOTA_STORE.idFromName(tokenId));
@@ -156,29 +187,26 @@ export async function handleEgress(
     );
   }
 
-  // Step 4 — forward. The body is buffered opaquely (no parse) so fetchWithRetry
+  // Step 5 — forward. The body is buffered opaquely (no parse) so fetchWithRetry
   // may re-send it; headers are rebuilt with the Bishop auth + control headers
-  // stripped. The installed allowlist AUTO-gates the target: a non-allowlisted
-  // host throws OutboundHostNotAllowed (no manual host-check) — caught → 403 with
-  // a GENERIC message (the allowlist contents are never leaked).
+  // stripped. The upstream URL is built from the SPEC host (Step 3) + the spec's
+  // pathPrefix + the remaining path segments + the query string — the worker
+  // never supplies the host. The installed allowlist interceptor is the runtime
+  // backstop.
   const rawBody = await request.arrayBuffer();
   const upstreamHeaders = rebuildEgressHeaders(request.headers);
-  let upstream: Response;
-  try {
-    upstream = await fetchWithRetry(target.toString(), {
+  const baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${upstreamHost}`;
+  const searchSuffix = url.search || "";
+  const upstream = await fetchWithRetry(
+    `${baseUrl}${spec.pathPrefix}${derivedPath.replace(/^\//, "")}${searchSuffix}`,
+    {
       method: request.method,
       headers: upstreamHeaders,
       body: rawBody.byteLength > 0 ? rawBody : undefined,
-    });
-  } catch (err) {
-    if (err instanceof OutboundHostNotAllowed) {
-      emitError(requestId, ip, requestSize, 403, "egress_host_not_allowed", startedAt, tokenId);
-      return jsonError(403, "egress_host_not_allowed");
-    }
-    throw err;
-  }
+    },
+  );
 
-  // Step 5 — metadata-only audit (Pillar 1 — no token, no body).
+  // Step 6 — metadata-only audit (Pillar 1 — no token, no body).
   emitResponse({
     request_id: requestId,
     token_id: tokenId,
