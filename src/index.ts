@@ -40,6 +40,7 @@ import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
 import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 import { handleMcp } from "./routes/mcp";
 import { handleModelRegistry } from "./routes/model-registry";
+import { handleEgress } from "./routes/egress";
 
 export interface Env {
   TIER_CACHE: DurableObjectNamespace;
@@ -212,6 +213,12 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/gemini/chat/completions") {
       return handleGemini(request, env, ctx);
+    }
+    // W38-S822 (S5b-1) — generic allowlist-gated forward egress route. The
+    // worker-microVM's vsock relay forwards a guest's outbound request here; the
+    // proxy forwards on, bounded by the frozen ALLOWED_OUTBOUND_HOSTS allowlist.
+    if (request.method === "POST" && url.pathname === "/v1/egress") {
+      return handleEgress(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
       return handleTierBind(request, env);
