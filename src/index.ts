@@ -214,10 +214,12 @@ export default {
     if (request.method === "POST" && url.pathname === "/v1/gemini/chat/completions") {
       return handleGemini(request, env, ctx);
     }
-    // W38-S822 (S5b-1) — generic allowlist-gated forward egress route. The
+    // W38-S822-FIX (S5b-1) — server_id-keyed generic forward egress route. The
     // worker-microVM's vsock relay forwards a guest's outbound request here; the
-    // proxy forwards on, bounded by the frozen ALLOWED_OUTBOUND_HOSTS allowlist.
-    if (request.method === "POST" && url.pathname === "/v1/egress") {
+    // proxy forwards on, with the upstream host derived SERVER-SIDE from the
+    // frozen CLASS_B_EGRESS_SPECS entry keyed by <server_id> (never the request,
+    // SSRF-safe — the W9.7 /mcp/<server_id> discipline).
+    if (request.method === "POST" && url.pathname.startsWith("/egress/")) {
       return handleEgress(request, env, ctx);
     }
     if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
