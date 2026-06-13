@@ -66,11 +66,21 @@ interface VerifyTokenResult {
  *   • authorization — the daemon Bearer (verified here; NEVER leaked upstream),
  *   • every x-bishop-* control header (incl. X-Bishop-Upstream-Host), and
  *   • the hop-by-hop host/content-length (recomputed by the runtime fetch).
- * Everything else survives byte-for-byte — a worker that needs upstream auth
- * carries it in a non-Bishop header (e.g. its own x-api-key), which passes through.
+ * Everything else survives byte-for-byte.
+ *
+ * UPSTREAM AUTH (W38-S831 S6b): a net_egress worker's OWN upstream credential
+ * (its connected-service OAuth bearer — §3.2 leg 3 "services you connected via
+ * your own credential") rides in the daemon-supplied X-Bishop-Egress-Authorization
+ * control header, NOT in `authorization` (which carries the daemon Bearer this
+ * route verifies + strips — the two would otherwise collide). It is the ONE
+ * x-bishop-* header NOT merely dropped: it is TRANSLATED to the upstream
+ * Authorization (set AFTER the strip loop so the loop never removes it). A worker
+ * that instead carries a non-Bishop auth header (e.g. its own x-api-key) still
+ * passes through untouched.
  */
 function rebuildEgressHeaders(incoming: Headers): Headers {
   const out = new Headers();
+  const egressAuth = (incoming.get("x-bishop-egress-authorization") ?? "").trim();
   for (const [k, v] of incoming.entries()) {
     const lk = k.toLowerCase();
     if (lk === "authorization") continue; // daemon Bearer — never forwarded
@@ -78,6 +88,9 @@ function rebuildEgressHeaders(incoming: Headers): Headers {
     if (lk === "host" || lk === "content-length") continue; // recomputed by fetch
     out.set(k, v);
   }
+  // The worker's upstream credential → upstream Authorization (set last so the
+  // x-bishop-* strip above cannot drop it). Absent → no Authorization forwarded.
+  if (egressAuth) out.set("Authorization", egressAuth);
   return out;
 }
 
@@ -197,12 +210,18 @@ export async function handleEgress(
   const upstreamHeaders = rebuildEgressHeaders(request.headers);
   const baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${upstreamHost}`;
   const searchSuffix = url.search || "";
+  // The worker's LOGICAL upstream method (GET list / POST create / …) rides in
+  // X-Bishop-Egress-Method (W38-S831 S6b): the daemon→proxy hop is always a POST
+  // carrying the worker's intent, so the route must honor the logical method here.
+  // Default to the incoming method (back-compat with the pre-S6b POST-only fixtures).
+  const egressMethod = (request.headers.get("x-bishop-egress-method") || request.method).toUpperCase();
+  const bodyless = egressMethod === "GET" || egressMethod === "HEAD";
   const upstream = await fetchWithRetry(
     `${baseUrl}${spec.pathPrefix}${derivedPath.replace(/^\//, "")}${searchSuffix}`,
     {
-      method: request.method,
+      method: egressMethod,
       headers: upstreamHeaders,
-      body: rawBody.byteLength > 0 ? rawBody : undefined,
+      body: !bodyless && rawBody.byteLength > 0 ? rawBody : undefined,
     },
   );
 

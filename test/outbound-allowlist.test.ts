@@ -7,12 +7,12 @@
  * §1.17.18 Azure guards:
  *   (8a) myresource.openai.azure.com NOT rejected post-install (resolves via mock prior)
  *   (8b) evil.com + suffix-bypass host rejected with OutboundHostNotAllowed
- *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry
+ *   (8c) ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress
  *
  * §1.17.19 Vertex guards:
  *   (9a) us-central1-aiplatform.googleapis.com accepted (isAnchoredEnterpriseHost)
  *   (9b) suffix-spoof rejected; oauth2.googleapis.com sibling rejected
- *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry
+ *   (9c) ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress
  *
  * §H-DYNAMIC BYOK expansion guards (founder-signed-off 2026-05-30):
  *   (10a) Each of 5 new hosts is in ALLOWED_OUTBOUND_HOSTS
@@ -82,8 +82,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry (B1 +1)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -103,8 +103,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 77 — 32 provider + 44 MCP + 1 model-registry (exact-match)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
   });
 });
 
@@ -187,8 +187,8 @@ describe("outbound-allowlist: W38-S735 per-account MCP host pattern guards", () 
     });
   }
 
-  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 77 = exact-match only)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(77);
+  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 80 = exact-match only)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
     for (const host of ENTERPRISE_OK) {
       expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(host)).toBe(false);
     }

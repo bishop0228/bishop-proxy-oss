@@ -18,14 +18,20 @@
  *     X-Bishop-Upstream-Host, admitted ONLY when it matches THIS spec's OWN
  *     anchored hostPattern (spec-bind; fail-closed on missing/mismatch).
  *
- * NO real Class B vendor host is added here. The 9 Class B worker hosts are added
- * per-worker in S5c (founder-reviewed, like the W9.7 per-account/fixed-host arcs)
- * as host-already-present spec entries; `fetch` (arbitrary URL) is NOT served by
- * this route — it goes to gateway-per-request approval in S5c. The entries below
- * are TEST-ONLY fixtures that exercise the fixed-host and per-account mechanism.
+ * W38-S831 S6b (founder-approved 2026-06-13) adds the FIRST 5 real Class B
+ * net_egress worker specs (google-contacts / xero / quickbooks fixed-host;
+ * tableau / metabase per-account CLOUD), each reached by server_id over the §3.2
+ * worker-egress leg with the host decided server-side here. `fetch` (arbitrary
+ * URL) is still NOT served by this route. The two `test-*` entries below remain
+ * TEST-ONLY fixtures that exercise the fixed-host and per-account mechanisms; the
+ * remaining parked Class B/C workers are added via this same reviewed path.
  */
 
-import { SNOWFLAKE_HOST_PATTERN } from "./outbound-allowlist";
+import {
+  SNOWFLAKE_HOST_PATTERN,
+  TABLEAU_CLOUD_HOST_PATTERN,
+  METABASE_CLOUD_HOST_PATTERN,
+} from "./outbound-allowlist";
 import type { McpServerSpec } from "./mcp-specs";
 
 export const CLASS_B_EGRESS_SPECS: Readonly<Record<string, McpServerSpec>> = Object.freeze({
@@ -50,5 +56,56 @@ export const CLASS_B_EGRESS_SPECS: Readonly<Record<string, McpServerSpec>> = Obj
     pathPrefix: "/api/v2/",
     authStyle: "bearer",
     baseUrlVar: "EGRESS_TEST_PERACCOUNT_BASE_URL",
+  },
+
+  // ── W38-S831 S6b — the 5 Class B net_egress worker specs (founder-approved
+  // 2026-06-13) ───────────────────────────────────────────────────────────────
+  // pathPrefix "/" for all: the daemon relay reconstructs the worker's full API
+  // path into the route URL (/egress/<server_id>/<full-path>), so the route's
+  // derivedPath already carries it (e.g. /api.xro/2.0/Contacts) and only the
+  // leading slash is needed. The worker's upstream OAuth bearer rides in
+  // X-Bishop-Egress-Authorization (translated to upstream Authorization by the
+  // route — it never collides with the daemon Bearer); the worker NEVER names the
+  // fixed host (server_id selects it server-side).
+  //
+  // FIXED-host (3): host frozen server-side, asserted ∈ ALLOWED_OUTBOUND_HOSTS.
+  "google-contacts": {
+    host: "people.googleapis.com",
+    pathPrefix: "/",
+    authStyle: "bearer",
+    baseUrlVar: "EGRESS_GOOGLE_CONTACTS_BASE_URL",
+  },
+  "xero": {
+    host: "api.xero.com",
+    pathPrefix: "/",
+    authStyle: "bearer",
+    baseUrlVar: "EGRESS_XERO_BASE_URL",
+  },
+  "quickbooks": {
+    host: "quickbooks.api.intuit.com",
+    pathPrefix: "/",
+    authStyle: "bearer",
+    baseUrlVar: "EGRESS_QUICKBOOKS_BASE_URL",
+  },
+
+  // PER-ACCOUNT CLOUD (2): the daemon-supplied X-Bishop-Upstream-Host (the
+  // gateway-scoped instance host the worker carries in its Host header) is
+  // admitted ONLY when it matches THIS spec's OWN anchored CLOUD pattern
+  // (spec-bind, SSRF-bounded to the one vendor domain; fail-closed on
+  // missing/mismatch). Self-hosted (arbitrary/internal host) is NOT admitted —
+  // a separate, deliberate §3.2 per-user exact-host carve (not a wildcard).
+  "tableau": {
+    hostFromUpstream: true,
+    hostPattern: [TABLEAU_CLOUD_HOST_PATTERN],
+    pathPrefix: "/",
+    authStyle: "bearer",
+    baseUrlVar: "EGRESS_TABLEAU_BASE_URL",
+  },
+  "metabase": {
+    hostFromUpstream: true,
+    hostPattern: [METABASE_CLOUD_HOST_PATTERN],
+    pathPrefix: "/",
+    authStyle: "bearer",
+    baseUrlVar: "EGRESS_METABASE_BASE_URL",
   },
 });

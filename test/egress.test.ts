@@ -352,4 +352,118 @@ describe("S5b-1 server_id-keyed egress leg (POST /egress/<server_id>)", () => {
     expect(resp.headers.get("X-Bishop-Cap-Type")).toBe("monthly_tasks");
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  // ── Probe 8: ★ S6b — the 3 FIXED-host worker specs resolve server-side ───
+  it("★ S6b fixed-host: google-contacts / xero / quickbooks each forward to their OWN frozen host + full path", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+
+    const cases: Array<[string, string, string, string]> = [
+      ["google-contacts", "v1/people/me/connections", "people.googleapis.com", "/v1/people/me/connections"],
+      ["xero", "api.xro/2.0/Contacts", "api.xero.com", "/api.xro/2.0/Contacts"],
+      ["quickbooks", "v3/company/123/query", "quickbooks.api.intuit.com", "/v3/company/123/query"],
+    ];
+    for (const [serverId, path, host, expectedPath] of cases) {
+      captures = [];
+      const resp = await handleEgress(egressReq({ serverId, path }), makeEnv(), makeCtx());
+      expect(resp.status, serverId).toBe(200);
+      expect(mockFetch).toHaveBeenCalled();
+      const u = new URL(captures[0].url);
+      expect(u.hostname, serverId).toBe(host);           // host server-side from the spec
+      expect(u.pathname, serverId).toBe(expectedPath);   // pathPrefix "/" + full worker path
+    }
+  });
+
+  // ── Probe 9: ★ S6b — the worker's upstream credential is forwarded ───────
+  it("★ S6b upstream-auth: X-Bishop-Egress-Authorization → upstream Authorization; daemon Bearer still stripped", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+
+    const resp = await handleEgress(
+      egressReq({
+        serverId: "xero",
+        path: "api.xro/2.0/Contacts",
+        extraHeaders: { "x-bishop-egress-authorization": "Bearer worker-oauth-token-xyz" },
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(resp.status).toBe(200);
+    const fwd = captures[0].headers;
+    // The worker's connected-service credential reaches the upstream as Authorization…
+    expect(fwd.get("authorization")).toBe("Bearer worker-oauth-token-xyz");
+    // …and the control header itself is NOT also forwarded (translated, not duplicated).
+    expect(fwd.get("x-bishop-egress-authorization")).toBeNull();
+  });
+
+  it("★ S6b upstream-auth absent: no Authorization is forwarded (the daemon Bearer is never leaked)", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    const resp = await handleEgress(egressReq({ serverId: "xero", path: "api.xro/2.0/Contacts" }), makeEnv(), makeCtx());
+    expect(resp.status).toBe(200);
+    expect(captures[0].headers.get("authorization")).toBeNull();
+  });
+
+  // ── Probe 10: ★ S6b — the worker's LOGICAL method is honored ─────────────
+  it("★ S6b logical-method: X-Bishop-Egress-Method GET → upstream fetched with GET, no body", async () => {
+    let seenMethod = "";
+    let seenHasBody = true;
+    mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input instanceof Request ? input.url : String(input);
+      captures.push({ url, headers: input instanceof Request ? input.headers : new Headers(init?.headers) });
+      seenMethod = (init?.method ?? (input instanceof Request ? input.method : "")) || "";
+      seenHasBody = (init?.body ?? (input instanceof Request ? input.body : null)) != null;
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+    installFetchAllowlist();
+
+    const resp = await handleEgress(
+      egressReq({
+        serverId: "google-contacts",
+        path: "v1/people/me/connections",
+        extraHeaders: { "x-bishop-egress-method": "GET" },
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(resp.status).toBe(200);
+    expect(seenMethod.toUpperCase()).toBe("GET");
+    expect(seenHasBody).toBe(false); // a GET carries no body even though the daemon hop is a POST
+  });
+
+  // ── Probe 11: ★ S6b — CLOUD per-account admit; SELF-HOSTED reject ────────
+  it("★ S6b cloud per-account: a matching Cloud host is admitted; a self-hosted/internal host is fail-closed (no forward)", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+
+    const cloud: Array<[string, string]> = [
+      ["tableau", "10ax.online.tableau.com"],
+      ["metabase", "acme-bishop.metabaseapp.com"],
+    ];
+    for (const [serverId, host] of cloud) {
+      captures = [];
+      const resp = await handleEgress(
+        egressReq({ serverId, path: "api/x", extraHeaders: { "x-bishop-upstream-host": host } }),
+        makeEnv(),
+        makeCtx(),
+      );
+      expect(resp.status, serverId).toBe(200);
+      expect(new URL(captures[0].url).hostname, serverId).toBe(host);
+    }
+
+    // SELF-HOSTED (arbitrary / internal) host → 400, NO forward. This is the
+    // deliberate §3.2 boundary: self-hosted is NOT admitted by the cloud pattern;
+    // it is a separate per-user exact-host carve, not a wildcard.
+    for (const [serverId, host] of [
+      ["tableau", "tableau.mycompany.example"],
+      ["metabase", "metabase.internal.corp"],
+    ] as Array<[string, string]>) {
+      captures = [];
+      const resp = await handleEgress(
+        egressReq({ serverId, path: "api/x", extraHeaders: { "x-bishop-upstream-host": host } }),
+        makeEnv(),
+        makeCtx(),
+      );
+      expect(resp.status, serverId).toBe(400);
+      expect(((await resp.json()) as { error: string }).error, serverId).toBe("egress_host_not_allowed");
+      expect(captures.length, serverId).toBe(0); // fail-closed: no forward for this server
+    }
+  });
 });

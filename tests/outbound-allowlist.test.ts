@@ -251,7 +251,11 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.salesforce.com");
     // B1 governed model-registry egress host (read-only GET, /model-registry/ leg).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("registry.ollama.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(77);
+    // W38-S831 S6b worker-microVM net_egress fixed hosts (§3.2 /egress/<server_id> leg).
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("people.googleapis.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.xero.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("quickbooks.api.intuit.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(80);
   });
 });
 

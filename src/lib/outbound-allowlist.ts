@@ -170,9 +170,25 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // proxy /model-registry/ leg, src/routes/model-registry.ts). Operational egress,
   // NOT model inference — no classifier/cost meter, only the flat abuse-bound quota.
   // Frozen host; every redirect hop is re-checked against this allowlist (B2 daemon
-  // content-pin is the integrity backstop). Total now 77 = 32 provider + 44 MCP + 1
-  // model-registry.
+  // content-pin is the integrity backstop). Running total 77 = 32 provider + 44 MCP
+  // + 1 model-registry (W38-S831 S6b adds 3 worker-egress fixed hosts below → 80).
   "registry.ollama.ai",
+  // ── W38-S831 S6b (founder-approved 2026-06-13): 3 worker-microVM net_egress
+  // FIXED-host hosts (length 77→80) ───────────────────────────────────────────
+  // The Bishop-authored Class B net_egress workers (google-contacts / xero /
+  // quickbooks) reach their FIXED vendor host via the §3.2 worker-egress leg
+  // (POST /egress/<server_id>, src/routes/egress.ts — host server-side from the
+  // frozen CLASS_B_EGRESS_SPECS, NEVER from the worker). Operational egress, NOT
+  // inference — flat abuse-bound quota only. metabase + tableau are NOT here:
+  // their cloud host is per-account, admitted as anchored ENTERPRISE_HOST_PATTERNS
+  // conjuncts below (Tableau Cloud / Metabase Cloud) exactly like the W38-S735
+  // per-account MCP vendors. quickbooks SANDBOX (sandbox-quickbooks.api.intuit.com)
+  // is intentionally NOT allow-listed — a dev-only Intuit host, addable via this
+  // same reviewed path if dev tooling ever needs it (Pillar 2: minimal surface).
+  // Total now 80 = 32 provider + 44 MCP + 1 model-registry + 3 worker-egress.
+  "people.googleapis.com",
+  "api.xero.com",
+  "quickbooks.api.intuit.com",
 ] as const);
 
 /**
@@ -207,6 +223,25 @@ export const DATABRICKS_AZURE_HOST_PATTERN =
 export const DATABRICKS_GCP_HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.[0-9]{1,3}\.gcp\.databricks\.com$/;
 
+// ── W38-S831 S6b per-account worker-egress CLOUD vendor host patterns
+// (founder-approved 2026-06-13) ──────────────────────────────────────────────
+// metabase + tableau have NO single fixed vendor host. For the CLOUD tiers their
+// host shape IS predictable and anchored, so — exactly like the W38-S735 Snowflake
+// per-account MCP pattern — each is a NAMED, spec-bound anchored conjunct. The
+// /egress route admits a daemon-supplied X-Bishop-Upstream-Host ONLY when it
+// matches the SPECIFIC pattern bound to the requested spec (class-b-egress-specs.ts
+// hostPattern; spec-bind, SSRF-bounded to the one vendor domain). SELF-HOSTED
+// Metabase/Tableau (arbitrary / internal host) is deliberately NOT admitted here —
+// it is a separate, deliberate §3.2 boundary decision (per-user exact-host carve),
+// NOT a wildcard. Tableau Cloud site host = <pod>.online.tableau.com (single label,
+// e.g. 10ax / prod-useast-a). Metabase Cloud host = <name>.metabaseapp.com (single
+// label). Each is fully anchored, single DNS label, lowercase-only, no `i` flag,
+// no .*, no unanchored alternation.
+export const TABLEAU_CLOUD_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.online\.tableau\.com$/;
+export const METABASE_CLOUD_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.metabaseapp\.com$/;
+
 export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openai\.azure\.com$/,
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-aiplatform\.googleapis\.com$/,
@@ -218,6 +253,10 @@ export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   DATABRICKS_AWS_HOST_PATTERN,
   DATABRICKS_AZURE_HOST_PATTERN,
   DATABRICKS_GCP_HOST_PATTERN,
+  // W38-S831 S6b per-account worker-egress CLOUD vendor hosts (the runtime fetch
+  // backstop admits these; the /egress route's spec-bound check is the explicit gate).
+  TABLEAU_CLOUD_HOST_PATTERN,
+  METABASE_CLOUD_HOST_PATTERN,
 ];
 
 /** Returns true if host matches an anchored enterprise-host pattern. */
