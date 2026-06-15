@@ -40,6 +40,7 @@ import { handleOAuthToken, handleOAuthCompletion } from "./routes/oauth";
 import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 import { handleMcp } from "./routes/mcp";
 import { handleModelRegistry } from "./routes/model-registry";
+import { handleModelHf } from "./routes/model-hf";
 import { handleEgress } from "./routes/egress";
 import { handleBrowserEgress } from "./routes/browser-egress";
 
@@ -116,6 +117,8 @@ export interface Env {
   MCP_SALESFORCE_BASE_URL?: string;
   // B1 governed model-registry egress base-URL override (test seam only)
   OLLAMA_REGISTRY_BASE_URL?: string;
+  // W38-S868 §9.3.8c governed HuggingFace egress base-URL override (test seam only)
+  HF_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
   CHALLENGE_TTL?: string;
@@ -269,6 +272,12 @@ export default {
     // host; operational, not inference).
     if (request.method === "GET" && url.pathname.startsWith("/model-registry/")) {
       return handleModelRegistry(request, env, ctx);
+    }
+
+    // W38-S868 §9.3.8c — governed HuggingFace model-download egress (read-only GET;
+    // frozen huggingface.co host; operational BYO-model fetch, not inference).
+    if (request.method === "GET" && url.pathname.startsWith("/model-hf/")) {
+      return handleModelHf(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname.startsWith("/oauth/")) {

@@ -82,8 +82,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 81 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -103,8 +103,42 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 80 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress (exact-match)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 81 — 32 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF (exact-match)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// W38-S868 §9.3.8c — governed HuggingFace BYO-model egress guards.
+//
+// `huggingface.co` is the +1 frozen exact-match host (length 80→81); its
+// LFS/Xet download CDN is the anchored HUGGINGFACE_CDN_HOST_PATTERN (NOT an
+// exact-match — it adds nothing to the length). The interceptor backstop must
+// admit huggingface.co + a valid .hf.co CDN host and reject every suffix-spoof.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("outbound-allowlist: W38-S868 §9.3.8c HuggingFace BYO-model guards", () => {
+  it("12a: huggingface.co is in ALLOWED_OUTBOUND_HOSTS (frozen exact-match host)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("huggingface.co");
+  });
+
+  it("12b: a valid HF LFS/Xet CDN host (.hf.co) is admitted by isAnchoredEnterpriseHost", () => {
+    expect(isAnchoredEnterpriseHost("cdn-lfs-us-1.hf.co")).toBe(true);
+    expect(isAnchoredEnterpriseHost("cas-bridge.xethub.hf.co")).toBe(true);
+  });
+
+  it("12c: the HF CDN pattern is a CDN-domain floor — NOT broadened off .hf.co", () => {
+    // Suffix-spoof: trailing attacker domain must not pass.
+    expect(isAnchoredEnterpriseHost("cdn-lfs-us-1.hf.co.attacker.com")).toBe(false);
+    // Bare CDN domain (no subdomain label) is not a real CDN host and is rejected.
+    expect(isAnchoredEnterpriseHost("hf.co")).toBe(false);
+    // The CDN pattern must NOT admit arbitrary huggingface.co subdomains.
+    expect(isAnchoredEnterpriseHost("api.huggingface.co")).toBe(false);
+  });
+
+  it("12d: the HF CDN host is NOT an exact-allowlist entry (length stays 81 = pattern-only)", () => {
+    expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("cdn-lfs-us-1.hf.co")).toBe(false);
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
   });
 });
 
@@ -187,8 +221,8 @@ describe("outbound-allowlist: W38-S735 per-account MCP host pattern guards", () 
     });
   }
 
-  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 80 = exact-match only)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(80);
+  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 81 = exact-match only)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
     for (const host of ENTERPRISE_OK) {
       expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(host)).toBe(false);
     }

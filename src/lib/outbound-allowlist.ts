@@ -189,6 +189,18 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "people.googleapis.com",
   "api.xero.com",
   "quickbooks.api.intuit.com",
+  // ── W38-S868 §9.3.8c (founder-approved 2026-06-15): governed BYO-model leg ──
+  // HuggingFace is the SECOND governed model-download source (after the Ollama
+  // registry above), reached ONLY via the §3.2 proxy /model-hf/ leg
+  // (src/routes/model-hf.ts — read-only GET, frozen host, NOT model inference: no
+  // classifier/cost-meter, flat abuse-bound quota). `huggingface.co` is the frozen
+  // API/resolve host; its LFS/Xet download CDN is the anchored
+  // HUGGINGFACE_CDN_HOST_PATTERN below (HF redirects resolve→CDN; every hop is
+  // re-checked against this allowlist). The daemon-side trust-on-first-use
+  // content-pin (W38-S868 model_tofu) is the integrity backstop — the user accepts
+  // + pins the sha256 of an uncurated model before it is imported. Running total 81
+  // = 32 provider + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
+  "huggingface.co",
 ] as const);
 
 /**
@@ -242,6 +254,20 @@ export const TABLEAU_CLOUD_HOST_PATTERN =
 export const METABASE_CLOUD_HOST_PATTERN =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.metabaseapp\.com$/;
 
+// ── W38-S868 §9.3.8c HuggingFace download CDN (founder-approved 2026-06-15) ──
+// HF serves model weights by redirecting <repo>/resolve/<rev>/<file> from
+// `huggingface.co` (the frozen exact-match host above) to its LFS/Xet CDN under
+// HF's short domain `hf.co`. The CDN subdomain varies (cdn-lfs-us-1.hf.co,
+// cas-bridge.xethub.hf.co, …) so the host is a NAMED anchored pattern — bound to
+// `.hf.co` (HF-owned, CDN-only), allowing the subdomain labels HF assigns. The
+// /model-hf route re-checks each redirect hop against the egress allowlist, so an
+// off-`.hf.co` redirect target is refused before any re-fetch (open-redirect →
+// exfil block). Fully anchored, lowercase-only, no `i` flag, no `.*`, no
+// unanchored alternation. NOT broadened to huggingface.co subdomains — only the
+// CDN domain. The daemon TOFU content-pin is the integrity backstop.
+export const HUGGINGFACE_CDN_HOST_PATTERN =
+  /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?\.hf\.co$/;
+
 export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.openai\.azure\.com$/,
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?-aiplatform\.googleapis\.com$/,
@@ -257,6 +283,9 @@ export const ENTERPRISE_HOST_PATTERNS: RegExp[] = [
   // backstop admits these; the /egress route's spec-bound check is the explicit gate).
   TABLEAU_CLOUD_HOST_PATTERN,
   METABASE_CLOUD_HOST_PATTERN,
+  // W38-S868 §9.3.8c HuggingFace download CDN (the /model-hf route re-checks every
+  // resolve→CDN redirect hop against this allowlist before re-fetching).
+  HUGGINGFACE_CDN_HOST_PATTERN,
 ];
 
 /** Returns true if host matches an anchored enterprise-host pattern. */
