@@ -201,8 +201,24 @@ export async function handleByok(
   const upstreamHeaders = rebuildByokHeaders(request.headers, keyResolution.key);
 
   // Step 7 — upstream fetch. Host derived from spec (frozen allowlist), never from request.
-  const baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${spec.upstreamHost}`;
-  const upstream = await fetchWithRetry(`${baseUrl}${derivedPath}`, {
+  // For providers that block the proxy's raw Worker egress IP (DeepSeek returns HTTP 451 to
+  // Cloudflare datacenter IPs on a direct fetch), route through Cloudflare AI Gateway when the
+  // CF_AIG_* env is configured — its managed egress is accepted by the provider. The host
+  // gateway.ai.cloudflare.com is already in ALLOWED_OUTBOUND_HOSTS (§H-DYNAMIC), so this widens
+  // nothing. Falls back to the direct host when AI Gateway is unconfigured (no regression).
+  let baseUrl: string;
+  let upstreamPath = derivedPath;
+  if (spec.aiGatewayProvider && env.CF_AIG_ACCOUNT && env.CF_AIG_GATEWAY && env.CF_AIG_TOKEN) {
+    baseUrl = `https://gateway.ai.cloudflare.com/v1/${env.CF_AIG_ACCOUNT}/${env.CF_AIG_GATEWAY}/${spec.aiGatewayProvider}`;
+    // AI Gateway's provider path is the vendor-native path without a leading /v1 segment.
+    upstreamPath = derivedPath.replace(/^\/v1(?=\/|$)/, "");
+    // Authenticated-gateway token (cf-aig-authorization) — distinct from the user's BYOK
+    // provider key, which rebuildByokHeaders already placed in the provider auth header.
+    upstreamHeaders.set("cf-aig-authorization", `Bearer ${env.CF_AIG_TOKEN}`);
+  } else {
+    baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${spec.upstreamHost}`;
+  }
+  const upstream = await fetchWithRetry(`${baseUrl}${upstreamPath}`, {
     method: "POST",
     headers: upstreamHeaders,
     body: JSON.stringify(body),

@@ -63,6 +63,11 @@ export interface Env {
   MISTRAL_BASE_URL?: string;
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_BASE_URL?: string;
+  // Cloudflare AI Gateway routing for datacenter-IP-blocked providers (e.g. DeepSeek).
+  // CF_AIG_TOKEN is a Worker secret (the gateway auth token); account + gateway id are vars.
+  CF_AIG_ACCOUNT?: string;
+  CF_AIG_GATEWAY?: string;
+  CF_AIG_TOKEN?: string;
   MINIMAX_API_KEY?: string;
   MINIMAX_BASE_URL?: string;
   ZHIPU_API_KEY?: string;

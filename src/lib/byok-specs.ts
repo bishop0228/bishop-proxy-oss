@@ -15,6 +15,15 @@ export interface ByokUpstreamSpec {
   upstreamHost: string;
   operatorKeyVar: string;
   baseUrlVar: string;
+  // When set, route this provider's upstream through Cloudflare AI Gateway
+  // (gateway.ai.cloudflare.com/v1/<acct>/<gw>/<aiGatewayProvider>/...) instead of
+  // a direct fetch to upstreamHost. Required for providers that block the
+  // proxy's raw Worker egress IP — e.g. DeepSeek returns HTTP 451 to Cloudflare
+  // datacenter IPs on a direct fetch, but accepts AI Gateway's managed egress.
+  // The value is the AI Gateway provider slug. Falls back to the direct path
+  // when the CF_AIG_* env is unset (no regression). gateway.ai.cloudflare.com is
+  // already in ALLOWED_OUTBOUND_HOSTS (§H-DYNAMIC), so this widens nothing.
+  aiGatewayProvider?: string;
 }
 
 export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = Object.freeze({
@@ -33,11 +42,14 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     baseUrlVar: "MISTRAL_BASE_URL",
   },
 
-  // deepseek — DeepSeek.
+  // deepseek — DeepSeek. Routed via Cloudflare AI Gateway: DeepSeek 451s the
+  // proxy's direct Worker egress IP (datacenter-IP block), but accepts AI
+  // Gateway's egress (architect-verified 2026-06-16, HTTP 200 through bishop-prod).
   deepseek: {
     upstreamHost: "api.deepseek.com",
     operatorKeyVar: "DEEPSEEK_API_KEY",
     baseUrlVar: "DEEPSEEK_BASE_URL",
+    aiGatewayProvider: "deepseek",
   },
 
   // minimax — MiniMax. // SECURITY-REVIEW: [SR] China-based; data-residency policy applies.

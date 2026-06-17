@@ -40,6 +40,11 @@ binding = "AI"
 
 [vars]
 TARGET_ZERO_BITS = "10"
+# Cloudflare AI Gateway routing for datacenter-IP-blocked providers (e.g. DeepSeek,
+# which 451s the proxy's direct Worker egress). Non-secret config; CF_AIG_TOKEN
+# (the authenticated-gateway token) is a SECRET set via `wrangler secret put` — see below.
+CF_AIG_ACCOUNT = "412d80cec803f73563b6b51e69b836ee"
+CF_AIG_GATEWAY = "bishop-prod"
 
 [env.staging]
 name = "bishop-proxy-staging"
@@ -88,6 +93,10 @@ TARGET_ZERO_BITS = "10"
 #                             user:<HMAC(user_id)> → token_id index. Required
 #                             before /v1/tier/bind and Stripe two-shard write
 #                             can compute lookups.
+#   CF_AIG_TOKEN            - Cloudflare AI Gateway authenticated-gateway token
+#                             (cf-aig-authorization) for the bishop-prod gateway.
+#                             Required to route datacenter-IP-blocked providers
+#                             (DeepSeek) via AI Gateway. `wrangler secret put CF_AIG_TOKEN`.
 
 [env.spike]
 name = "bishop-proxy-spike"
