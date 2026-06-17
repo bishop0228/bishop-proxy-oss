@@ -238,9 +238,26 @@ export class AuthStoreDO {
     account_mode: "managed" | "byok" = "managed",
     test_ttl_ms?: number,
   ): Promise<{ record: AuthRecord; isNew: boolean }> {
-    // Pre-transaction idempotency check
+    // Pre-transaction idempotency check.
     const existing = await this._lookupByFingerprint(fingerprint_hash);
-    if (existing) return { record: existing, isNew: false };
+    if (existing) {
+      // FREE→CONNECTED relabel (W38-S872g model): when an already-enrolled device
+      // connects its first BYOK key / subscription / local model, the daemon
+      // re-enrolls with account_mode="byok". Honor that ONE-DIRECTIONAL upgrade by
+      // updating the existing record in place (the fp:/tid: indexes still point at
+      // the same token, so only the record's account_mode field changes). The
+      // free tier ends the moment the user connects anything — there is no
+      // free-tier fallback once connected. The reverse (byok→managed) is NOT
+      // auto-applied here: downgrading to Bishop's managed/operator key is
+      // billing-sensitive and must stay fail-closed (a deliberate, gated action),
+      // never a side effect of a re-enroll.
+      if (existing.account_mode === "managed" && account_mode === "byok") {
+        const relabeled: AuthRecord = { ...existing, account_mode: "byok" };
+        await this.state.storage.put(`token:${existing.token}`, relabeled);
+        return { record: relabeled, isNew: false };
+      }
+      return { record: existing, isNew: false };
+    }
 
     const tokenBytes = new Uint8Array(32);
     crypto.getRandomValues(tokenBytes);

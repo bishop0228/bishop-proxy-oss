@@ -274,3 +274,95 @@ describe("AuthStoreDO: expired verdict via TTL seam", () => {
     expect(body.error).toBe("token_expired");
   }, 30000);
 });
+
+describe("AuthStoreDO: FREE→CONNECTED relabel on re-enroll (W38-S872g)", () => {
+  let mock: Unstable_DevWorker;
+  let worker: Unstable_DevWorker;
+
+  beforeAll(async () => {
+    mock = await unstable_dev("test/mock-anthropic.ts", {
+      config: "test/wrangler.mock.toml",
+      experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
+      persist: false,
+    });
+    const mockUrl = `http://${mock.address}:${mock.port}`;
+    worker = await unstable_dev("src/index.ts", {
+      experimental: { disableExperimentalWarning: true },
+      env: "staging",
+      vars: {
+        ...PROXY_VARS_BASE,
+        ANTHROPIC_BASE_URL: mockUrl,
+        BISHOP_TEST_OUTBOUND_HOSTS: mock.address,
+        ADMIN_TOKEN: "test_admin",
+        USER_INDEX_HMAC_KEY: "test_hmac_key",
+      },
+      persist: false,
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    for (const endpoint of ["challenge", "enroll"]) {
+      const r = await worker.fetch("/admin/rate-limit/clear", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
+        body: JSON.stringify({ ip_prefix: "127.0.0", endpoint, date: today }),
+      });
+      if (!r.ok) throw new Error(`rate-limit clear failed for ${endpoint}: ${r.status}`);
+      await r.json();
+    }
+  }, 60000);
+
+  afterAll(async () => {
+    await worker.stop();
+    await mock.stop();
+  });
+
+  async function enrollMode(
+    fp: string,
+    accountMode?: "managed" | "byok",
+  ): Promise<{ status: number; rec: AuthRecord }> {
+    const { nonce } = (await (await worker.fetch("/v1/challenge")).json()) as { nonce: string };
+    const counter = solvePow(fp, nonce, 8, 8);
+    const body: Record<string, unknown> = {
+      nonce,
+      counter,
+      fingerprint_hash: fp,
+      client_version: TEST_VERSION,
+    };
+    if (accountMode) body.account_mode = accountMode;
+    const res = await worker.fetch("/v1/enroll", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, rec: (await res.json()) as AuthRecord };
+  }
+
+  it("managed device that connects a key (re-enrolls byok) is relabeled byok — same token, no new enrollment", async () => {
+    const fp = "3c".repeat(32);
+
+    // First enrollment with no account_mode → FREE/managed (free-tier default).
+    const first = await enrollMode(fp);
+    expect([200, 201]).toContain(first.status);
+    expect(first.rec.account_mode).toBe("managed");
+
+    // User connects a BYOK key → daemon re-enrolls with account_mode="byok".
+    // The free tier ends; the existing device is relabeled in place.
+    const second = await enrollMode(fp, "byok");
+    expect(second.status).toBe(200); // existing fingerprint → not a new issuance
+    expect(second.rec.account_mode).toBe("byok"); // relabeled
+    expect(second.rec.token_id).toBe(first.rec.token_id); // same device/token
+    expect(second.rec.token).toBe(first.rec.token);
+  }, 40000);
+
+  it("does NOT auto-downgrade byok→managed on re-enroll (billing-safe; fail-closed)", async () => {
+    const fp = "4d".repeat(32);
+    const byokFirst = await enrollMode(fp, "byok");
+    expect([200, 201]).toContain(byokFirst.status);
+    expect(byokFirst.rec.account_mode).toBe("byok");
+
+    // A managed re-enroll must NOT silently flip a connected device back to
+    // Bishop's operator key (that would let it spend on the managed key).
+    const managedReenroll = await enrollMode(fp, "managed");
+    expect(managedReenroll.rec.account_mode).toBe("byok"); // unchanged
+    expect(managedReenroll.rec.token_id).toBe(byokFirst.rec.token_id);
+  }, 40000);
+});
