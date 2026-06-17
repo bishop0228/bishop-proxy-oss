@@ -22,6 +22,11 @@ export interface OAuthUpstreamSpec {
   completionPath: string;        // FIXED upstream path — proxy NEVER derives it from the inbound request
   completionBaseUrlVar: string;
   extraUpstreamHeaders?: Readonly<Record<string, string>>;
+  // Per-request account-id passthrough header (e.g. "chatgpt-account-id" for openai_codex). The
+  // daemon sends the Bishop-namespaced X-Bishop-Upstream-Account-Id; the route maps its value to
+  // THIS header upstream. Distinct from extraUpstreamHeaders (a FIXED value) — the account-id is
+  // per-user/per-request data. Omitted for providers that need no account header.
+  accountIdHeader?: string;
 }
 
 export const OAUTH_UPSTREAM_SPECS: Readonly<Record<string, OAuthUpstreamSpec>> = Object.freeze({
@@ -34,6 +39,7 @@ export const OAUTH_UPSTREAM_SPECS: Readonly<Record<string, OAuthUpstreamSpec>> =
     completionHost: "chatgpt.com",
     completionPath: "/backend-api/codex/responses",
     completionBaseUrlVar: "OPENAI_CODEX_COMPLETION_BASE_URL",
+    accountIdHeader: "chatgpt-account-id",
   },
 
   // xai_grok — xAI Grok subscription.

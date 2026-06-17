@@ -8,7 +8,7 @@
  *   POST /__reset          — clear lastAuth, lastBody, lastDashScopeAuthType
  *   GET  /__last_auth      — { auth: string | null }
  *   GET  /__last_body      — { body: string | null }
- *   GET  /__last_headers   — { authType: string | null }
+ *   GET  /__last_headers   — { authType: string | null, chatgptAccountId: string | null }
  *   POST <any path>        — branch on path:
  *     token paths (includes "oauth" | ends with "/token" | includes "access_token")
  *       → { access_token: "upstream-minted-xyz", token_type: "bearer", expires_in: 3600 }
@@ -19,6 +19,7 @@
 let lastAuth: string | null = null;
 let lastBody: string | null = null;
 let lastDashScopeAuthType: string | null = null;
+let lastChatgptAccountId: string | null = null;
 
 const CHATCMPL_BODY = {
   id: "chatcmpl-mock",
@@ -46,6 +47,7 @@ export default {
       lastAuth = null;
       lastBody = null;
       lastDashScopeAuthType = null;
+      lastChatgptAccountId = null;
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -67,16 +69,20 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/__last_headers") {
-      return new Response(JSON.stringify({ authType: lastDashScopeAuthType }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({ authType: lastDashScopeAuthType, chatgptAccountId: lastChatgptAccountId }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
     }
 
     if (request.method === "POST") {
       lastAuth = request.headers.get("authorization");
       lastBody = await request.text();
       lastDashScopeAuthType = request.headers.get("x-dashscope-authtype");
+      lastChatgptAccountId = request.headers.get("chatgpt-account-id");
 
       const isTokenPath =
         url.pathname.includes("oauth") ||

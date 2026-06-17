@@ -328,6 +328,43 @@ describe("OAuth legs (/oauth/<seg>/token + /v1/<seg>/...)", () => {
     expect(authType).toBe("qwen-oauth");
   }, 30000);
 
+  // ---- codex account-id passthrough ×2 (W38-S873b) ----
+
+  it("openai_codex byok-forward: X-Bishop-Upstream-Account-Id → mock sees chatgpt-account-id", async () => {
+    const res = await worker.fetch("/v1/openai_codex/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-oauth-token-openai_codex",
+        "x-bishop-upstream-account-id": "acct_codex_123",
+      },
+      body: JSON.stringify({ model: "test-model", input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }] }),
+    });
+    expect(res.status).toBe(200);
+    const lastHeadersRes = await mock.fetch(mockUrl + "/__last_headers");
+    const { chatgptAccountId } = (await lastHeadersRes.json()) as { chatgptAccountId: string | null };
+    expect(chatgptAccountId).toBe("acct_codex_123");
+  }, 30000);
+
+  it("xai_grok (no accountIdHeader spec): X-Bishop-Upstream-Account-Id is NOT forwarded upstream", async () => {
+    await mock.fetch(mockUrl + "/__reset", { method: "POST" });
+    const res = await worker.fetch("/v1/xai_grok/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-oauth-token-xai_grok",
+        "x-bishop-upstream-account-id": "acct_should_not_leak",
+      },
+      body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    const lastHeadersRes = await mock.fetch(mockUrl + "/__last_headers");
+    const { chatgptAccountId } = (await lastHeadersRes.json()) as { chatgptAccountId: string | null };
+    expect(chatgptAccountId).toBeNull();
+  }, 30000);
+
   // ---- Pillar-1 no-leak ×1 ----
 
   it("Pillar-1: byok-forward 200 response headers carry no credential; content-type forwarded", async () => {

@@ -212,6 +212,15 @@ export async function handleOAuthCompletion(
     }
   }
 
+  // Per-request account-id passthrough (e.g. chatgpt-account-id for openai_codex). The daemon sends
+  // the Bishop-namespaced X-Bishop-Upstream-Account-Id, which rebuildByokHeaders drops along with
+  // every other client identifier (Pillar 1); map its value to the upstream header THIS spec needs.
+  // Omitted when absent — never fabricated.
+  if (spec.accountIdHeader) {
+    const acctId = (request.headers.get("x-bishop-upstream-account-id") ?? "").trim();
+    if (acctId) upstreamHeaders.set(spec.accountIdHeader, acctId);
+  }
+
   // Step 7 — upstream fetch. Path is FIXED per spec (never derived from inbound request).
   const baseUrl = envVar(env, spec.completionBaseUrlVar) ?? `https://${spec.completionHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${spec.completionPath}`, {
