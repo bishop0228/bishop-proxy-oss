@@ -8,18 +8,23 @@
  *   POST /__reset          — clear lastAuth, lastBody, lastDashScopeAuthType
  *   GET  /__last_auth      — { auth: string | null }
  *   GET  /__last_body      — { body: string | null }
- *   GET  /__last_headers   — { authType: string | null, chatgptAccountId: string | null }
+ *   GET  /__last_headers   — { authType, chatgptAccountId, originator, openaiBeta, accept, sessionId }
  *   POST <any path>        — branch on path:
  *     token paths (includes "oauth" | ends with "/token" | includes "access_token")
  *       → { access_token: "upstream-minted-xyz", token_type: "bearer", expires_in: 3600 }
  *     completion paths
- *       → chatcmpl mock body
+ *       → text/event-stream SSE body when the request Accept is text/event-stream (codex),
+ *         else the chatcmpl mock body
  */
 
 let lastAuth: string | null = null;
 let lastBody: string | null = null;
 let lastDashScopeAuthType: string | null = null;
 let lastChatgptAccountId: string | null = null;
+let lastOriginator: string | null = null;
+let lastOpenAIBeta: string | null = null;
+let lastAccept: string | null = null;
+let lastSessionId: string | null = null;
 
 const CHATCMPL_BODY = {
   id: "chatcmpl-mock",
@@ -32,6 +37,16 @@ const CHATCMPL_BODY = {
     },
   ],
 };
+
+// Responses-API SSE body (the codex backend shape) — returned when the inbound
+// request asks for text/event-stream so a probe can assert the stream passes
+// through the proxy uncorrupted.
+const SSE_BODY =
+  'data: {"type":"response.created"}\n\n' +
+  'data: {"type":"response.output_text.delta","delta":"Hello "}\n\n' +
+  'data: {"type":"response.output_text.delta","delta":"world"}\n\n' +
+  'data: {"type":"response.completed","response":{"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello world"}]}]}}\n\n' +
+  "data: [DONE]\n\n";
 
 const TOKEN_BODY = {
   access_token: "upstream-minted-xyz",
@@ -48,6 +63,10 @@ export default {
       lastBody = null;
       lastDashScopeAuthType = null;
       lastChatgptAccountId = null;
+      lastOriginator = null;
+      lastOpenAIBeta = null;
+      lastAccept = null;
+      lastSessionId = null;
       return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
@@ -70,7 +89,14 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/__last_headers") {
       return new Response(
-        JSON.stringify({ authType: lastDashScopeAuthType, chatgptAccountId: lastChatgptAccountId }),
+        JSON.stringify({
+          authType: lastDashScopeAuthType,
+          chatgptAccountId: lastChatgptAccountId,
+          originator: lastOriginator,
+          openaiBeta: lastOpenAIBeta,
+          accept: lastAccept,
+          sessionId: lastSessionId,
+        }),
         {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -83,14 +109,33 @@ export default {
       lastBody = await request.text();
       lastDashScopeAuthType = request.headers.get("x-dashscope-authtype");
       lastChatgptAccountId = request.headers.get("chatgpt-account-id");
+      lastOriginator = request.headers.get("originator");
+      lastOpenAIBeta = request.headers.get("openai-beta");
+      lastAccept = request.headers.get("accept");
+      lastSessionId = request.headers.get("session_id");
 
       const isTokenPath =
         url.pathname.includes("oauth") ||
         url.pathname.endsWith("/token") ||
         url.pathname.includes("access_token");
 
-      const responseBody = isTokenPath ? TOKEN_BODY : CHATCMPL_BODY;
-      return new Response(JSON.stringify(responseBody), {
+      if (isTokenPath) {
+        return new Response(JSON.stringify(TOKEN_BODY), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+
+      // Completion path. If the caller declared SSE (the codex fingerprint),
+      // stream a text/event-stream body so the probe can assert the proxy
+      // passes the stream through uncorrupted.
+      if ((lastAccept ?? "").includes("text/event-stream")) {
+        return new Response(SSE_BODY, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response(JSON.stringify(CHATCMPL_BODY), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

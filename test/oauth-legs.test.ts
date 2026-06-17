@@ -1,7 +1,7 @@
 /**
  * Integration probes for the OAuth subscription legs.
  *
- * 26 probes total:
+ * 31 probes total (W38-S873c: +3 codex fingerprint + SSE passthrough):
  *   token-forward             ×5  (one per seg: POST /oauth/<seg>/token → 200 + access_token)
  *   token auth-required       ×1  (no bearer → 401 missing_bearer)
  *   token unknown-provider    ×1  (unknown seg → 404 unknown_provider)
@@ -363,6 +363,88 @@ describe("OAuth legs (/oauth/<seg>/token + /v1/<seg>/...)", () => {
     const lastHeadersRes = await mock.fetch(mockUrl + "/__last_headers");
     const { chatgptAccountId } = (await lastHeadersRes.json()) as { chatgptAccountId: string | null };
     expect(chatgptAccountId).toBeNull();
+  }, 30000);
+
+  // ---- codex fingerprint + SSE passthrough ×3 (W38-S873c) ----
+
+  it("openai_codex: FIXED fingerprint headers (originator/OpenAI-Beta/Accept) + mapped session_id sent upstream", async () => {
+    const res = await worker.fetch("/v1/openai_codex/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-oauth-token-openai_codex",
+        "x-bishop-upstream-session-id": "sess_codex_abc",
+      },
+      body: JSON.stringify({
+        model: "gpt-5-codex",
+        stream: true,
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const lastHeadersRes = await mock.fetch(mockUrl + "/__last_headers");
+    const { originator, openaiBeta, accept, sessionId } = (await lastHeadersRes.json()) as {
+      originator: string | null;
+      openaiBeta: string | null;
+      accept: string | null;
+      sessionId: string | null;
+    };
+    // The fixed Codex client fingerprint the backend whitelists.
+    expect(originator).toBe("codex_cli_rs");
+    expect(openaiBeta).toBe("responses=experimental");
+    expect(accept).toBe("text/event-stream");
+    // The per-request session id, mapped from the Bishop-namespaced header.
+    expect(sessionId).toBe("sess_codex_abc");
+  }, 30000);
+
+  it("openai_codex: SSE upstream body streams back through the proxy uncorrupted", async () => {
+    const res = await worker.fetch("/v1/openai_codex/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-oauth-token-openai_codex",
+      },
+      body: JSON.stringify({
+        model: "gpt-5-codex",
+        stream: true,
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hi" }] }],
+      }),
+    });
+    expect(res.status).toBe(200);
+    // The proxy forwards the upstream content-type (text/event-stream).
+    expect(res.headers.get("content-type")).toBe("text/event-stream");
+    const text = await res.text();
+    // The response.* SSE events arrive intact (no buffering/transform corruption).
+    expect(text).toContain("response.output_text.delta");
+    expect(text).toContain("response.completed");
+    expect(text).toContain("Hello world");
+  }, 30000);
+
+  it("xai_grok (no codex fingerprint spec): originator/OpenAI-Beta are NOT forwarded upstream", async () => {
+    await mock.fetch(mockUrl + "/__reset", { method: "POST" });
+    const res = await worker.fetch("/v1/xai_grok/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-oauth-token-xai_grok",
+        "x-bishop-upstream-session-id": "sess_should_not_leak",
+      },
+      body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    const lastHeadersRes = await mock.fetch(mockUrl + "/__last_headers");
+    const { originator, openaiBeta, sessionId } = (await lastHeadersRes.json()) as {
+      originator: string | null;
+      openaiBeta: string | null;
+      sessionId: string | null;
+    };
+    expect(originator).toBeNull();
+    expect(openaiBeta).toBeNull();
+    // No sessionIdHeader on the xai_grok spec → not mapped upstream.
+    expect(sessionId).toBeNull();
   }, 30000);
 
   // ---- Pillar-1 no-leak ×1 ----

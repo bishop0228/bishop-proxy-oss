@@ -221,6 +221,14 @@ export async function handleOAuthCompletion(
     if (acctId) upstreamHeaders.set(spec.accountIdHeader, acctId);
   }
 
+  // Per-request session-id passthrough (e.g. session_id for openai_codex). Same shape as the
+  // account-id: the daemon sends the Bishop-namespaced X-Bishop-Upstream-Session-Id (dropped by
+  // rebuildByokHeaders); map its value to the upstream header THIS spec needs. Omitted when absent.
+  if (spec.sessionIdHeader) {
+    const sessionId = (request.headers.get("x-bishop-upstream-session-id") ?? "").trim();
+    if (sessionId) upstreamHeaders.set(spec.sessionIdHeader, sessionId);
+  }
+
   // Step 7 — upstream fetch. Path is FIXED per spec (never derived from inbound request).
   const baseUrl = envVar(env, spec.completionBaseUrlVar) ?? `https://${spec.completionHost}`;
   const upstream = await fetchWithRetry(`${baseUrl}${spec.completionPath}`, {
