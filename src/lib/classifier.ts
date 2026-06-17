@@ -70,6 +70,52 @@ export function resolveModel(env: Env): string | null {
 // Ai binding uses branded model overloads; cast the binding object to access run() with a plain signature.
 type AiRunFn = (model: string, input: { messages: { role: string; content: string }[] }) => Promise<LlamaGuardResponse>;
 
+// Extract the user/assistant turns the classifier must inspect, from EITHER request
+// shape the proxy forwards: OpenAI chat-completions (`body.messages`) OR the OpenAI
+// Responses API (`body.input` item list — what the ChatGPT/Codex subscription backend
+// speaks; each item carries `content` parts like {type:"input_text", text}). Without
+// the `input` branch a Responses request yields an EMPTY conversation → Llama Guard
+// errors on empty input → fail-closed block (the live-observed Codex 451) AND the
+// request's real content goes UN-classified. Reading both shapes closes that gap.
+// The empty-result case is unchanged (still fail-closed downstream).
+export function classifierMessagesFromBody(
+  body: Record<string, unknown>,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  if (Array.isArray(body.messages)) {
+    return (body.messages as Array<{ role: string; content: unknown }>)
+      .filter((m) => m.role === "user" || m.role === "assistant")
+      .map((m) => ({
+        role: m.role as "user" | "assistant",
+        content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      }));
+  }
+  if (Array.isArray(body.input)) {
+    return (body.input as Array<Record<string, unknown>>)
+      .filter((it) => it && typeof it === "object" && (it.role === "user" || it.role === "assistant"))
+      .map((it) => {
+        const c = it.content;
+        let content: string;
+        if (typeof c === "string") {
+          content = c;
+        } else if (Array.isArray(c)) {
+          // Responses content parts: prefer the `text` field (input_text/output_text),
+          // else stringify the part so nothing classifiable is silently dropped.
+          content = c
+            .map((p) =>
+              p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string"
+                ? ((p as { text: string }).text)
+                : JSON.stringify(p),
+            )
+            .join("\n");
+        } else {
+          content = JSON.stringify(c);
+        }
+        return { role: it.role as "user" | "assistant", content };
+      });
+  }
+  return [];
+}
+
 // Routes the classify request through a self-hosted classifier endpoint (CLASSIFIER_URL).
 // Mirrors the Cloudflare AI binding path: same timeout, same fail-closed envelope.
 export async function classifyViaUrl(
@@ -115,14 +161,7 @@ export async function classify(
     return { decision: "block", category: null, classifier_error_reason: "ai_binding_error" };
   }
 
-  const messages = Array.isArray(body.messages)
-    ? (body.messages as Array<{ role: string; content: unknown }>)
-        .filter((m) => m.role === "user" || m.role === "assistant")
-        .map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
-        }))
-    : [];
+  const messages = classifierMessagesFromBody(body);
 
   // CLASSIFIER_URL takes precedence over the Cloudflare AI binding (self-host path).
   if (env.CLASSIFIER_URL) {
