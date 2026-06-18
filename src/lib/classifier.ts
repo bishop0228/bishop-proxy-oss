@@ -48,7 +48,12 @@ function parseLlamaGuardResponse(response: string): Pick<ClassifierResult, "deci
   const lines = trimmed.split("\n");
   const codes = (lines[1] ?? "").split(",");
   const firstCode = codes[0]?.trim() ?? "";
-  return { decision: "block", category: mapCategory(firstCode) };
+  const category = mapCategory(firstCode);
+  // Operator-conduit floor: the proxy is a transit operator for the BYOK path,
+  // so it BLOCKS only CSAM-class transit (Llama Guard S4 → "csam"). Every other
+  // "unsafe" category is ALLOWED to proceed — the upstream provider's own safety
+  // is the backstop — but is still classified and logged for transparency.
+  return { decision: category === "csam" ? "block" : "allow", category };
 }
 
 function mockClassify(): ClassifierResult {

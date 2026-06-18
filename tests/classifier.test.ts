@@ -41,6 +41,24 @@ describe("classify()", () => {
     expect(result.classifier_error_reason).toBe(null);
   });
 
+  it("allow: non-CSAM unsafe category (S9 weapons) is allowed but still classified", async () => {
+    const env = makeEnv(async () => ({ response: "unsafe\nS9" }));
+    const result = await classify({ messages: [{ role: "user", content: "borderline" }] }, env);
+    // CSAM-class only blocks; every other unsafe category proceeds (provider safety
+    // is the backstop) but the category is still surfaced for transparency/logging.
+    expect(result.decision).toBe("allow");
+    expect(result.category).toBe("weapons");
+    expect(result.classifier_error_reason).toBe(null);
+  });
+
+  it("allow: unmapped unsafe category (S1 → 'other') is allowed but still classified", async () => {
+    const env = makeEnv(async () => ({ response: "unsafe\nS1" }));
+    const result = await classify({ messages: [{ role: "user", content: "borderline" }] }, env);
+    expect(result.decision).toBe("allow");
+    expect(result.category).toBe("other");
+    expect(result.classifier_error_reason).toBe(null);
+  });
+
   it("timeout: AI run exceeds 2000ms → fail-closed block", async () => {
     const env = makeEnv(async () => {
       await new Promise((r) => setTimeout(r, 3000));

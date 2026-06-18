@@ -6,8 +6,9 @@
  *   2. JSON.stringify(emittedEvent) does NOT contain the prompt-injection marker
  *
  * Coverage:
- *   (a) S-class block path — mock AI binding returns "unsafe\nS1"; body has
- *       canary; assert 451 + no canary in logs + valid ProxyLogEvent shape
+ *   (a) S-class block path — mock AI binding returns "unsafe\nS4" (CSAM-class,
+ *       the only category the proxy blocks); body has canary; assert 451 + no
+ *       canary in logs + valid ProxyLogEvent shape
  *   (b) System-prompt extraction attempt — message asks to reveal system prompt;
  *       allow path; assert no message bytes reach log
  *   (c) Log injection framing — message body contains a fabricated JSON
@@ -184,7 +185,8 @@ describe("adversarial corpus", () => {
 
   // (a) S-class block path.
   it("S-class block: canary in messages body does not leak to log; 451 returned", async () => {
-    const env = makeEnvBlock("unsafe\nS1");
+    // CSAM-class (S4) is the only category the proxy still blocks post-narrow.
+    const env = makeEnvBlock("unsafe\nS4");
     const { ctx, pending } = makeCtx();
 
     const body = JSON.stringify({

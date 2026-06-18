@@ -75,8 +75,10 @@ describe("classify() with the real path (mocked AI.run) — Codex input is inspe
     expect(res.decision).toBe("allow");
   });
 
-  it("harmful content carried in the Codex input shape → block", async () => {
-    const env = envWithAI(async () => ({ response: "unsafe\nS1" }));
+  it("CSAM-class content carried in the Codex input shape → block", async () => {
+    // Only CSAM-class (Llama Guard S4) transit is blocked; the test proves the
+    // Codex `input` shape reaches the classifier AND that the CSAM block fires.
+    const env = envWithAI(async () => ({ response: "unsafe\nS4" }));
     const res = await classify(
       {
         model: "gpt-5-codex",
@@ -85,5 +87,19 @@ describe("classify() with the real path (mocked AI.run) — Codex input is inspe
       env,
     );
     expect(res.decision).toBe("block");
+    expect(res.category).toBe("csam");
+  });
+
+  it("non-CSAM unsafe content in the Codex input shape → allowed but still classified", async () => {
+    const env = envWithAI(async () => ({ response: "unsafe\nS1" }));
+    const res = await classify(
+      {
+        model: "gpt-5-codex",
+        input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "<borderline payload>" }] }],
+      },
+      env,
+    );
+    expect(res.decision).toBe("allow");
+    expect(res.category).toBe("other");
   });
 });
