@@ -34,6 +34,13 @@ import {
 } from "./outbound-allowlist";
 import type { McpServerSpec } from "./mcp-specs";
 
+// W38-S888 — Xero's connected-org `Xero-tenant-id` is a GUID (the tenantId from
+// Xero's Connections API). An anchored lowercase-GUID pattern (same shape as
+// mcp.ts's MCP_TENANT_GUID_RE) blocks `/`, `.`, `..` and every header/path
+// injection while admitting exactly the real id shape. Fail-closed on mismatch.
+export const XERO_TENANT_GUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 export const CLASS_B_EGRESS_SPECS: Readonly<Record<string, McpServerSpec>> = Object.freeze({
   // TEST-ONLY fixed-host fixture. api.perplexity.ai is ALREADY in
   // ALLOWED_OUTBOUND_HOSTS, so the defense-in-depth assertion passes. Not a real
@@ -75,9 +82,16 @@ export const CLASS_B_EGRESS_SPECS: Readonly<Record<string, McpServerSpec>> = Obj
     authStyle: "bearer",
     baseUrlVar: "EGRESS_GOOGLE_CONTACTS_BASE_URL",
   },
+  // xero ALSO carries a per-account enforcement field in a custom UPSTREAM HEADER
+  // (the connected-org Xero-tenant-id) — the ONLY Class B worker that does (W38-S888).
+  // The daemon relay forwards ONLY this spec-declared header (allowlisted), and the
+  // route re-validates it (GUID) + injects it server-side, fail-closed. The host
+  // stays frozen/server-side; this is the header-target analog of the per-tenant
+  // PATH carry (microsoft-365, W38-S736).
   "xero": {
     host: "api.xero.com",
     pathPrefix: "/",
+    headerTenantFromUpstream: { header: "Xero-tenant-id", pattern: XERO_TENANT_GUID_RE },
     authStyle: "bearer",
     baseUrlVar: "EGRESS_XERO_BASE_URL",
   },

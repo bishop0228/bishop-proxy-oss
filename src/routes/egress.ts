@@ -27,6 +27,12 @@
  *        • PER-ACCOUNT spec: host = X-Bishop-Upstream-Host (daemon-supplied),
  *          admitted ONLY when it matches THIS spec's OWN anchored hostPattern
  *          (spec-bind). Missing → 400; mismatch → 400 (fail-closed, NO forward).
+ *   3b. per-account UPSTREAM HEADER (W38-S888) — a spec MAY declare ONE forwardable
+ *       upstream header (xero's Xero-tenant-id, headerTenantFromUpstream). The relay
+ *       carries it Bishop-namespaced (X-Bishop-Egress-Header-*); the route reads +
+ *       VALIDATES it (anchored pattern) + injects it server-side. Missing → 400;
+ *       invalid → 400 (fail-closed, NO forward). The header-target analog of /mcp's
+ *       per-tenant PATH substitution. Servers without one are unaffected.
  *   4. flat-weight quota /check (abuse-bound, weight 1, cost 0 — not inference).
  *   5. forward — fetchWithRetry(<host from spec + path>, { method, headers: <Bishop
  *      auth + ALL X-Bishop-* control headers STRIPPED, Pillar 1>, body }). The
@@ -78,7 +84,10 @@ interface VerifyTokenResult {
  * that instead carries a non-Bishop auth header (e.g. its own x-api-key) still
  * passes through untouched.
  */
-function rebuildEgressHeaders(incoming: Headers): Headers {
+function rebuildEgressHeaders(
+  incoming: Headers,
+  injectHeader?: { name: string; value: string } | null,
+): Headers {
   const out = new Headers();
   const egressAuth = (incoming.get("x-bishop-egress-authorization") ?? "").trim();
   for (const [k, v] of incoming.entries()) {
@@ -91,6 +100,11 @@ function rebuildEgressHeaders(incoming: Headers): Headers {
   // The worker's upstream credential → upstream Authorization (set last so the
   // x-bishop-* strip above cannot drop it). Absent → no Authorization forwarded.
   if (egressAuth) out.set("Authorization", egressAuth);
+  // W38-S888 — the spec-declared, route-VALIDATED per-account header (xero's
+  // Xero-tenant-id) → upstream. Set last for the same reason: the relay carried it
+  // as X-Bishop-Egress-Header-*, which the x-bishop-* strip above drops, so the
+  // ONLY way it reaches the upstream is this validated server-side injection.
+  if (injectHeader) out.set(injectHeader.name, injectHeader.value);
   return out;
 }
 
@@ -175,6 +189,32 @@ export async function handleEgress(
     upstreamHost = spec.host;
   }
 
+  // Step 3b — per-account UPSTREAM HEADER injection (W38-S888, the header-target
+  // analog of /mcp's per-tenant PATH substitution). A spec MAY declare ONE
+  // forwardable upstream header (xero's Xero-tenant-id). The daemon relay carries
+  // it Bishop-namespaced (X-Bishop-Egress-Header-<header>); here we read it,
+  // VALIDATE the value against the frozen spec pattern (anchored — blocks header
+  // injection), and inject it server-side as the named upstream header. Fail-closed:
+  // missing → 400 egress_upstream_header_missing; invalid → 400 egress_header_not_allowed
+  // (NO forward). The host stays frozen/server-side; the value is the worker's own
+  // already-resolved per-account cred (no privilege gain). §3.2 — see
+  // strongest_claims_security.md.
+  let injectHeader: { name: string; value: string } | null = null;
+  if (spec.headerTenantFromUpstream) {
+    const { header, pattern } = spec.headerTenantFromUpstream;
+    const relayName = `x-bishop-egress-header-${header.toLowerCase()}`;
+    const supplied = (request.headers.get(relayName) ?? "").trim();
+    if (!supplied) {
+      emitError(requestId, ip, requestSize, 400, "egress_upstream_header_missing", startedAt, tokenId);
+      return jsonError(400, "egress_upstream_header_missing");
+    }
+    if (!pattern.test(supplied)) {
+      emitError(requestId, ip, requestSize, 400, "egress_header_not_allowed", startedAt, tokenId);
+      return jsonError(400, "egress_header_not_allowed");
+    }
+    injectHeader = { name: header, value: supplied };
+  }
+
   // Step 4 — tier read + flat-weight quota /check (abuse-bound; no cost meter —
   // generic egress is not model inference).
   const tier = await readTier(env, tokenId);
@@ -207,7 +247,7 @@ export async function handleEgress(
   // never supplies the host. The installed allowlist interceptor is the runtime
   // backstop.
   const rawBody = await request.arrayBuffer();
-  const upstreamHeaders = rebuildEgressHeaders(request.headers);
+  const upstreamHeaders = rebuildEgressHeaders(request.headers, injectHeader);
   const baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${upstreamHost}`;
   const searchSuffix = url.search || "";
   // The worker's LOGICAL upstream method (GET list / POST create / …) rides in

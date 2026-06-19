@@ -85,6 +85,18 @@ export interface McpServerSpec {
    * with `host` (the host is still frozen); never combined with `hostFromUpstream`.
    */
   pathTenantFromUpstream?: boolean;
+  /**
+   * W38-S888 — a server whose per-account enforcement field rides a custom UPSTREAM
+   * HEADER (xero's connected-org `Xero-tenant-id`), the header-target analog of
+   * `pathTenantFromUpstream`. The daemon relay forwards ONLY this spec-declared
+   * header name (Bishop-namespaced as `X-Bishop-Egress-Header-<header>`); the route
+   * reads it, VALIDATES the value against `pattern` (anchored), and injects it as
+   * the named upstream header. Fail-closed: missing → 400, invalid → 400 (NO
+   * forward). The value is the worker's OWN already-resolved per-account cred (no
+   * privilege gain); the host is still frozen/server-side. Used by the Class B
+   * /egress route (src/routes/egress.ts).
+   */
+  headerTenantFromUpstream?: { header: string; pattern: RegExp };
   /** Upstream auth scheme. All current MCP servers rebuild a Bearer header. */
   authStyle: "bearer";
   /** Env var name for a base-URL override (test seam — never set in production). */

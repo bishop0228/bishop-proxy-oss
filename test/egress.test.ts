@@ -46,6 +46,10 @@ const FIXED_HOST = "api.perplexity.ai";
 const PERACCOUNT_SERVER = "test-peraccount";
 const PERACCOUNT_MATCH_HOST = "acme-bishop.snowflakecomputing.com";
 const PERACCOUNT_MISMATCH_HOST = "evil-cdn.attacker.example";
+// xero now REQUIRES its per-account Xero-tenant-id (a GUID) on the /egress leg
+// (W38-S888). Carried by the daemon relay as X-Bishop-Egress-Header-Xero-tenant-id.
+const XERO_TENANT_HEADER = "x-bishop-egress-header-xero-tenant-id";
+const XERO_TENANT_GUID = "e1eede29-f875-4a5d-8470-17f6a29a88b1";
 
 // ── DO stubs (mirror the unit-style env helpers in model-registry.test.ts) ──
 
@@ -364,7 +368,10 @@ describe("S5b-1 server_id-keyed egress leg (POST /egress/<server_id>)", () => {
     ];
     for (const [serverId, path, host, expectedPath] of cases) {
       captures = [];
-      const resp = await handleEgress(egressReq({ serverId, path }), makeEnv(), makeCtx());
+      // xero requires its per-account tenant header (W38-S888); the other two don't.
+      const extraHeaders =
+        serverId === "xero" ? { [XERO_TENANT_HEADER]: XERO_TENANT_GUID } : undefined;
+      const resp = await handleEgress(egressReq({ serverId, path, extraHeaders }), makeEnv(), makeCtx());
       expect(resp.status, serverId).toBe(200);
       expect(mockFetch).toHaveBeenCalled();
       const u = new URL(captures[0].url);
@@ -381,7 +388,10 @@ describe("S5b-1 server_id-keyed egress leg (POST /egress/<server_id>)", () => {
       egressReq({
         serverId: "xero",
         path: "api.xro/2.0/Contacts",
-        extraHeaders: { "x-bishop-egress-authorization": "Bearer worker-oauth-token-xyz" },
+        extraHeaders: {
+          "x-bishop-egress-authorization": "Bearer worker-oauth-token-xyz",
+          [XERO_TENANT_HEADER]: XERO_TENANT_GUID,
+        },
       }),
       makeEnv(),
       makeCtx(),
@@ -396,7 +406,15 @@ describe("S5b-1 server_id-keyed egress leg (POST /egress/<server_id>)", () => {
 
   it("★ S6b upstream-auth absent: no Authorization is forwarded (the daemon Bearer is never leaked)", async () => {
     installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
-    const resp = await handleEgress(egressReq({ serverId: "xero", path: "api.xro/2.0/Contacts" }), makeEnv(), makeCtx());
+    const resp = await handleEgress(
+      egressReq({
+        serverId: "xero",
+        path: "api.xro/2.0/Contacts",
+        extraHeaders: { [XERO_TENANT_HEADER]: XERO_TENANT_GUID },
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
     expect(resp.status).toBe(200);
     expect(captures[0].headers.get("authorization")).toBeNull();
   });
@@ -465,5 +483,68 @@ describe("S5b-1 server_id-keyed egress leg (POST /egress/<server_id>)", () => {
       expect(((await resp.json()) as { error: string }).error, serverId).toBe("egress_host_not_allowed");
       expect(captures.length, serverId).toBe(0); // fail-closed: no forward for this server
     }
+  });
+
+  // ── Probe 12: ★ S888 — per-account UPSTREAM HEADER inject / validate / fail-closed
+  it("★ S888 header-tenant: a valid Xero-tenant-id is injected server-side; the relay-form header is NOT forwarded", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+
+    const resp = await handleEgress(
+      egressReq({
+        serverId: "xero",
+        path: "api.xro/2.0/Contacts",
+        extraHeaders: { [XERO_TENANT_HEADER]: XERO_TENANT_GUID },
+      }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(resp.status).toBe(200);
+    const fwd = captures[0].headers;
+    // The validated value is injected as the named UPSTREAM header…
+    expect(fwd.get("Xero-tenant-id")).toBe(XERO_TENANT_GUID);
+    // …and the Bishop-namespaced relay form is stripped (translated, not duplicated).
+    expect(fwd.get(XERO_TENANT_HEADER)).toBeNull();
+  });
+
+  it("★ S888 header-tenant fail-closed: missing → 400, invalid (non-GUID / injection) → 400, NO forward", async () => {
+    installFetch(() => new Response("LEAKED", { status: 200 }));
+
+    // (a) missing the required header → 400, NO forward.
+    const missing = await handleEgress(
+      egressReq({ serverId: "xero", path: "api.xro/2.0/Contacts" }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as { error: string }).error).toBe("egress_upstream_header_missing");
+
+    // (b) a non-GUID value (incl. a path-injection attempt) → 400, NO forward.
+    for (const bad of ["ORG-9", "../../etc/passwd", "e1eede29-f875-4a5d-8470-17f6a29a88b1/x", ""]) {
+      const resp = await handleEgress(
+        egressReq({
+          serverId: "xero",
+          path: "api.xro/2.0/Contacts",
+          extraHeaders: bad === "" ? {} : { [XERO_TENANT_HEADER]: bad },
+        }),
+        makeEnv(),
+        makeCtx(),
+      );
+      expect(resp.status, bad).toBe(400);
+    }
+
+    // Nothing ever forwarded across the whole fail-closed set.
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("★ S888 other-servers-unaffected: a server with no declared header forwards WITHOUT one", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    // google-contacts declares no headerTenantFromUpstream → no header requirement.
+    const resp = await handleEgress(
+      egressReq({ serverId: "google-contacts", path: "v1/people/me/connections" }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(resp.status).toBe(200);
+    expect(captures[0].headers.get("Xero-tenant-id")).toBeNull();
   });
 });
