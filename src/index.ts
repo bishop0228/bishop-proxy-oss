@@ -41,6 +41,7 @@ import { OAUTH_UPSTREAM_SPECS } from "./lib/oauth-specs";
 import { handleMcp } from "./routes/mcp";
 import { handleModelRegistry } from "./routes/model-registry";
 import { handleModelHf } from "./routes/model-hf";
+import { handleModelList } from "./routes/model-list";
 import { handleEgress } from "./routes/egress";
 import { handleBrowserEgress } from "./routes/browser-egress";
 
@@ -283,6 +284,18 @@ export default {
     // frozen huggingface.co host; operational BYO-model fetch, not inference).
     if (request.method === "GET" && url.pathname.startsWith("/model-hf/")) {
       return handleModelHf(request, env, ctx);
+    }
+
+    // W38-S935 — provider-generic LIVE model-list leg (the freshness fan-out).
+    // The daemon's freshness fetch GETs the live per-provider model list with
+    // `X-Bishop-Provider` naming the upstream; the proxy derives the upstream
+    // {host, path, auth} SERVER-SIDE from the frozen MODEL_LIST_SPECS (the inbound
+    // path is advisory — never trusted, the W9.7 SSRF discipline). Matched on the
+    // explicit X-Bishop-Provider signal, AFTER all the fixed GET routes above so
+    // it shadows none of them. Operational egress, NOT inference (no classifier/
+    // cost-meter; flat abuse-bound quota). See src/routes/model-list.ts.
+    if (request.method === "GET" && request.headers.has("x-bishop-provider")) {
+      return handleModelList(request, env, ctx);
     }
 
     if (request.method === "POST" && url.pathname.startsWith("/oauth/")) {
