@@ -45,6 +45,11 @@ export interface CheckRequest {
   tier: Tier;
   weight: number;
   cost_cents_estimate?: number;
+  // W38-S923: the device's account_mode. A CONNECTED (byok) device pays its OWN
+  // provider, so the free-tier daily_floor must NOT apply to it — only managed
+  // (FREE) devices are metered against the floor. Defaults to "managed" (the
+  // metered path) when omitted, preserving the existing free-tier wall.
+  account_mode?: "managed" | "byok";
 }
 
 export interface CheckResult {
@@ -114,7 +119,11 @@ export function evaluateCheck(
   if (cap.monthly_tasks !== null && projectedTasks > cap.monthly_tasks) {
     return { ok: false, reason: "monthly_tasks_exceeded" };
   }
-  if (cap.daily_floor !== null && projectedDaily > cap.daily_floor) {
+  // W38-S923: the daily_floor is a FREE-tier (managed) wall only. A CONNECTED
+  // (byok) device resolves its own credential per request and pays its own
+  // provider, so the floor must not gate it — gate the floor on managed/FREE only.
+  const isByok = req.account_mode === "byok";
+  if (!isByok && cap.daily_floor !== null && projectedDaily > cap.daily_floor) {
     return { ok: false, reason: "daily_floor_exceeded" };
   }
   return { ok: true };

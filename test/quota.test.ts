@@ -113,6 +113,40 @@ describe("evaluateCheck — free tier", () => {
   });
 });
 
+// W38-S923: a CONNECTED (byok) device pays its own provider, so the free-tier
+// daily_floor must NOT gate it — only managed/FREE devices are metered.
+describe("evaluateCheck — account_mode byok bypasses the daily_floor", () => {
+  it("byok device at/over the daily_floor is NOT rejected", () => {
+    const s = stateAt({ monthly_cost_cents: 0, monthly_tasks: 0, daily_tasks: 30 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "byok",
+    });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it("managed device at the daily_floor is STILL rejected (the wall stays)", () => {
+    const s = stateAt({ monthly_cost_cents: 0, monthly_tasks: 0, daily_tasks: 30 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "managed",
+    });
+    expect(r).toEqual({ ok: false, reason: "daily_floor_exceeded" });
+  });
+
+  it("omitted account_mode defaults to the metered (managed) path", () => {
+    const s = stateAt({ monthly_cost_cents: 0, monthly_tasks: 0, daily_tasks: 30 });
+    const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 0 });
+    expect(r).toEqual({ ok: false, reason: "daily_floor_exceeded" });
+  });
+
+  it("byok does NOT bypass the monthly_tasks cap (only the daily_floor lifts)", () => {
+    const s = stateAt({ monthly_cost_cents: 0, monthly_tasks: 200, daily_tasks: 0 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "byok",
+    });
+    expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
+  });
+});
+
 describe("evaluateCheck — solo tier", () => {
   it("allows below 480¢ / 2000-task caps", () => {
     const s = stateAt({ monthly_cost_cents: 100, monthly_tasks: 500, daily_tasks: 999 });

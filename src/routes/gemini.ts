@@ -96,7 +96,14 @@ export async function handleGemini(
   const checkResp = await quotaStub.fetch("https://internal/check", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ tier, weight: 1, cost_cents_estimate: 0 }),
+    // W38-S923: forward account_mode so a CONNECTED (byok) device bypasses the
+    // free-tier daily_floor (it pays its own provider); managed/FREE stays metered.
+    body: JSON.stringify({
+      tier,
+      weight: 1,
+      cost_cents_estimate: 0,
+      account_mode: record.account_mode ?? "managed",
+    }),
   });
   if (checkResp.status === 429) {
     const cr = (await checkResp.json()) as { reason?: string };
