@@ -138,12 +138,38 @@ describe("evaluateCheck — account_mode byok bypasses the daily_floor", () => {
     expect(r).toEqual({ ok: false, reason: "daily_floor_exceeded" });
   });
 
-  it("byok does NOT bypass the monthly_tasks cap (only the daily_floor lifts)", () => {
+  it("byok does NOT bypass the monthly_tasks cap (only the cost meters lift)", () => {
     const s = stateAt({ monthly_cost_cents: 0, monthly_tasks: 200, daily_tasks: 0 });
     const r = evaluateCheck(s, {
       tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "byok",
     });
     expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
+  });
+});
+
+// W38-S937: a CONNECTED (byok) device pays its own provider, so the free-tier
+// monthly_cost cap must NOT gate it either (sibling of the S923 daily_floor fix).
+describe("evaluateCheck — account_mode byok bypasses the monthly_cost cap", () => {
+  it("byok device over the monthly_cost cap is NOT rejected", () => {
+    const s = stateAt({ monthly_cost_cents: 100, monthly_tasks: 0, daily_tasks: 0 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 10, account_mode: "byok",
+    });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it("managed device over the monthly_cost cap is STILL rejected (the wall stays)", () => {
+    const s = stateAt({ monthly_cost_cents: 100, monthly_tasks: 0, daily_tasks: 0 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 10, account_mode: "managed",
+    });
+    expect(r).toEqual({ ok: false, reason: "monthly_cost_exceeded" });
+  });
+
+  it("omitted account_mode defaults to the metered (managed) monthly_cost path", () => {
+    const s = stateAt({ monthly_cost_cents: 100, monthly_tasks: 0, daily_tasks: 0 });
+    const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 10 });
+    expect(r).toEqual({ ok: false, reason: "monthly_cost_exceeded" });
   });
 });
 
@@ -202,6 +228,26 @@ describe("applyIncrement", () => {
     expect(s.monthly_cost_cents).toBe(10);
     expect(s.monthly_tasks).toBe(5);
     expect(s.daily_tasks).toBe(2);
+  });
+
+  // W38-S937: a byok device's inference cost must not touch the free-tier cost
+  // meter; the task counters (abuse bound) still advance.
+  it("byok increment does NOT advance monthly_cost_cents (task counters still move)", () => {
+    const s = stateAt({ monthly_cost_cents: 10, monthly_tasks: 5, daily_tasks: 2 });
+    const next = applyIncrement(s, { weight: 3, cost_cents: 25, account_mode: "byok" });
+    expect(next).toEqual({
+      period_month: "2026-04",
+      period_day: "2026-04-28",
+      monthly_cost_cents: 10,
+      monthly_tasks: 8,
+      daily_tasks: 5,
+    });
+  });
+
+  it("managed increment still advances monthly_cost_cents (unchanged)", () => {
+    const s = stateAt({ monthly_cost_cents: 10, monthly_tasks: 5, daily_tasks: 2 });
+    const next = applyIncrement(s, { weight: 3, cost_cents: 25, account_mode: "managed" });
+    expect(next.monthly_cost_cents).toBe(35);
   });
 });
 

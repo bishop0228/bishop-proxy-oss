@@ -8,9 +8,11 @@
  *   POST /check     — preflight. Body: { tier, weight, cost_cents_estimate? }.
  *                     Returns { ok: true } | { ok: false, reason }. Does NOT
  *                     mutate counters.
- *   POST /increment — commit. Body: { weight, cost_cents }. Atomically advances
- *                     monthly_cost_cents, monthly_tasks, daily_tasks (in a single
- *                     storage.transaction). Rolls period boundaries defensively.
+ *   POST /increment — commit. Body: { weight, cost_cents, account_mode? }.
+ *                     Atomically advances monthly_cost_cents, monthly_tasks,
+ *                     daily_tasks (in a single storage.transaction). Rolls period
+ *                     boundaries defensively. A byok account_mode skips the
+ *                     monthly_cost meter (S937 — it pays its own provider).
  *   GET  /          — debug/observability. Returns the current state.
  *
  * Storage shape (G9):
@@ -60,6 +62,12 @@ export interface CheckResult {
 export interface IncrementRequest {
   weight: number;
   cost_cents: number;
+  // W38-S937: a CONNECTED (byok) device pays its OWN provider, so its inference
+  // cost must NOT advance the proxy's free-tier monthly_cost meter (or the cap —
+  // already byok-bypassed in evaluateCheck — would re-fire off a meter polluted
+  // by traffic Bishop never pays for). The task counters (monthly_tasks abuse
+  // bound) still advance. Defaults to "managed" (the metered path) when omitted.
+  account_mode?: "managed" | "byok";
 }
 
 export function currentPeriod(now: Date = new Date()): { month: string; day: string } {
@@ -113,16 +121,18 @@ export function evaluateCheck(
   const projectedTasks = state.monthly_tasks + req.weight;
   const projectedDaily = state.daily_tasks + req.weight;
 
-  if (cap.monthly_cost_cents !== null && projectedCost > cap.monthly_cost_cents) {
+  // W38-S923/S937: a CONNECTED (byok) device pays its OWN provider, so the
+  // free-tier COST meters — both the monthly_cost cap (S937) and the daily_floor
+  // (S923) — must NOT gate it. Only managed/FREE devices are metered against the
+  // proxy's free-tier walls. The monthly_tasks cap is an abuse bound and STILL
+  // applies to byok (it is not a cost meter). Defaults to the metered path.
+  const isByok = req.account_mode === "byok";
+  if (!isByok && cap.monthly_cost_cents !== null && projectedCost > cap.monthly_cost_cents) {
     return { ok: false, reason: "monthly_cost_exceeded" };
   }
   if (cap.monthly_tasks !== null && projectedTasks > cap.monthly_tasks) {
     return { ok: false, reason: "monthly_tasks_exceeded" };
   }
-  // W38-S923: the daily_floor is a FREE-tier (managed) wall only. A CONNECTED
-  // (byok) device resolves its own credential per request and pays its own
-  // provider, so the floor must not gate it — gate the floor on managed/FREE only.
-  const isByok = req.account_mode === "byok";
   if (!isByok && cap.daily_floor !== null && projectedDaily > cap.daily_floor) {
     return { ok: false, reason: "daily_floor_exceeded" };
   }
@@ -133,9 +143,13 @@ export function applyIncrement(
   state: QuotaState,
   req: IncrementRequest,
 ): QuotaState {
+  // W38-S937: byok inference cost does not touch the free-tier cost meter.
+  const isByok = req.account_mode === "byok";
   return {
     ...state,
-    monthly_cost_cents: state.monthly_cost_cents + req.cost_cents,
+    monthly_cost_cents: isByok
+      ? state.monthly_cost_cents
+      : state.monthly_cost_cents + req.cost_cents,
     monthly_tasks: state.monthly_tasks + req.weight,
     daily_tasks: state.daily_tasks + req.weight,
   };

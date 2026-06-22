@@ -283,7 +283,10 @@ export async function handleMessages(
         await quotaStub.fetch("https://internal/increment", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ weight, cost_cents: costCents }),
+          // W38-S937: forward account_mode so a CONNECTED (byok) device's
+          // inference cost does not advance the proxy's free-tier monthly_cost
+          // meter (it pays its own provider). Mirrors the S923 /check forwarding.
+          body: JSON.stringify({ weight, cost_cents: costCents, account_mode: accountMode }),
         });
       } catch {
         // best-effort: increment failure is logged below by event_type=error.
