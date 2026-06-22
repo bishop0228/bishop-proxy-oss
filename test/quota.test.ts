@@ -155,11 +155,39 @@ describe("evaluateCheck — account_mode byok bypasses the daily_floor", () => {
     expect(r).toEqual({ ok: false, reason: "daily_floor_exceeded" });
   });
 
-  it("byok does NOT bypass the monthly_tasks cap (only the cost meters lift)", () => {
+  it("managed device at the monthly_tasks cap is STILL rejected (the wall stays)", () => {
+    const s = stateAt({ monthly_cost_microcents: 0, monthly_tasks: 200, daily_tasks: 0 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "managed",
+    });
+    expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
+  });
+});
+
+// W38-S939: a CONNECTED (byok) device pays its own provider, so the free-tier
+// monthly_tasks cap must NOT gate it either — the THIRD free-tier quota dimension
+// (sibling of the S923 daily_floor + S937 monthly_cost fixes). This was the gap #21:
+// a byok run 429'd on monthly_tasks_exceeded because the check had no byok guard.
+describe("evaluateCheck — account_mode byok bypasses the monthly_tasks cap", () => {
+  it("byok device over the monthly_tasks cap is NOT rejected", () => {
     const s = stateAt({ monthly_cost_microcents: 0, monthly_tasks: 200, daily_tasks: 0 });
     const r = evaluateCheck(s, {
       tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "byok",
     });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it("managed device over the monthly_tasks cap is STILL rejected (the wall stays)", () => {
+    const s = stateAt({ monthly_cost_microcents: 0, monthly_tasks: 200, daily_tasks: 0 });
+    const r = evaluateCheck(s, {
+      tier: "free", weight: 1, cost_cents_estimate: 0, account_mode: "managed",
+    });
+    expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
+  });
+
+  it("omitted account_mode defaults to the metered (managed) monthly_tasks path", () => {
+    const s = stateAt({ monthly_cost_microcents: 0, monthly_tasks: 200, daily_tasks: 0 });
+    const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 0 });
     expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
   });
 });
@@ -247,24 +275,79 @@ describe("applyIncrement", () => {
     expect(s.daily_tasks).toBe(2);
   });
 
-  // W38-S937: a byok device's inference cost must not touch the free-tier cost
-  // meter; the task counters (abuse bound) still advance.
-  it("byok increment does NOT advance monthly_cost_microcents (task counters still move)", () => {
+  // W38-S939: a byok device touches NO free-tier counter — not the cost meter
+  // (S937) and not the task counters (S939, the comprehensive sweep). A byok
+  // increment is a complete no-op on every quota dimension.
+  it("byok increment advances NO free-tier counter (cost + both task counters frozen)", () => {
     const s = stateAt({ monthly_cost_microcents: 10, monthly_tasks: 5, daily_tasks: 2 });
     const next = applyIncrement(s, { weight: 3, cost_microcents: 25, account_mode: "byok" });
     expect(next).toEqual({
       period_month: "2026-04",
       period_day: "2026-04-28",
       monthly_cost_microcents: 10,
-      monthly_tasks: 8,
-      daily_tasks: 5,
+      monthly_tasks: 5,
+      daily_tasks: 2,
     });
   });
 
-  it("managed increment still advances monthly_cost_microcents (unchanged)", () => {
+  it("managed increment still advances all three counters (unchanged, fail-closed)", () => {
     const s = stateAt({ monthly_cost_microcents: 10, monthly_tasks: 5, daily_tasks: 2 });
     const next = applyIncrement(s, { weight: 3, cost_microcents: 25, account_mode: "managed" });
     expect(next.monthly_cost_microcents).toBe(35);
+    expect(next.monthly_tasks).toBe(8);
+    expect(next.daily_tasks).toBe(5);
+  });
+});
+
+// W38-S939: THE INVARIANT — end the whack-a-mole. A CONNECTED (byok) device pays
+// its own provider, so it must clear EVERY free-tier quota gate on BOTH the check
+// and the increment, no matter how many counters are past their caps. We fixed the
+// gates piecemeal (S923 daily_floor, S937 monthly_cost, S939 monthly_tasks); this
+// invariant proves the principle holds wholesale and forces a decision if a new
+// cap dimension is ever added. Managed/FREE stays fail-closed + metered on all.
+describe("W38-S939 INVARIANT — byok clears EVERY free-tier gate (no whack-a-mole)", () => {
+  // A device whose daily_tasks, monthly_tasks AND monthly_cost are ALL past every
+  // free-tier cap (daily_floor 30, monthly_tasks 200, monthly_cost 100¢).
+  const overEveryCap = stateAt({
+    monthly_cost_microcents: 1_000 * C, // 10× the 100¢ cap
+    monthly_tasks: 10_000,              // 50× the 200 cap
+    daily_tasks: 10_000,                // 333× the 30 daily_floor
+  });
+
+  it("byok over EVERY cap returns ok:true on the check (no *_exceeded on any dimension)", () => {
+    const r = evaluateCheck(overEveryCap, {
+      tier: "free", weight: 9999, cost_cents_estimate: 9999, account_mode: "byok",
+    });
+    expect(r).toEqual({ ok: true });
+  });
+
+  it("byok over EVERY cap advances NO free-tier counter on the increment", () => {
+    const next = applyIncrement(overEveryCap, {
+      weight: 9999, cost_microcents: 9_999_999, account_mode: "byok",
+    });
+    expect(next.monthly_cost_microcents).toBe(overEveryCap.monthly_cost_microcents);
+    expect(next.monthly_tasks).toBe(overEveryCap.monthly_tasks);
+    expect(next.daily_tasks).toBe(overEveryCap.daily_tasks);
+  });
+
+  it("managed over EVERY cap is STILL fail-closed (rejected) and STILL metered", () => {
+    const r = evaluateCheck(overEveryCap, {
+      tier: "free", weight: 1, cost_cents_estimate: 1, account_mode: "managed",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/_exceeded$/);
+    const next = applyIncrement(overEveryCap, {
+      weight: 3, cost_microcents: 25, account_mode: "managed",
+    });
+    expect(next.monthly_cost_microcents).toBe(overEveryCap.monthly_cost_microcents + 25);
+    expect(next.monthly_tasks).toBe(overEveryCap.monthly_tasks + 3);
+    expect(next.daily_tasks).toBe(overEveryCap.daily_tasks + 3);
+  });
+
+  it("omitted account_mode (default managed) over EVERY cap is STILL fail-closed", () => {
+    const r = evaluateCheck(overEveryCap, { tier: "free", weight: 1, cost_cents_estimate: 1 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toMatch(/_exceeded$/);
   });
 });
 

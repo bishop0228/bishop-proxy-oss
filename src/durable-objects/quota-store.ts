@@ -11,8 +11,9 @@
  *   POST /increment — commit. Body: { weight, cost_microcents, account_mode? }.
  *                     Atomically advances monthly_cost_microcents, monthly_tasks,
  *                     daily_tasks (in a single storage.transaction). Rolls period
- *                     boundaries defensively. A byok account_mode skips the
- *                     monthly_cost meter (S937 — it pays its own provider).
+ *                     boundaries defensively. A byok account_mode skips ALL free-
+ *                     tier counters — cost meter + task counters (S937/S939 — it
+ *                     pays its own provider, so it touches no free-tier meter).
  *   GET  /          — debug/observability. Returns the current state.
  *
  * Storage shape (G9):
@@ -71,11 +72,14 @@ export interface IncrementRequest {
   // W38-S938: the per-request inference cost in micro-cents (cents × 10,000),
   // computed exactly (no per-request ceil-to-1¢ floor). See computeCostMicroCents.
   cost_microcents: number;
-  // W38-S937: a CONNECTED (byok) device pays its OWN provider, so its inference
-  // cost must NOT advance the proxy's free-tier monthly_cost meter (or the cap —
-  // already byok-bypassed in evaluateCheck — would re-fire off a meter polluted
-  // by traffic Bishop never pays for). The task counters (monthly_tasks abuse
-  // bound) still advance. Defaults to "managed" (the metered path) when omitted.
+  // W38-S937/S939: a CONNECTED (byok) device pays its OWN provider, so NONE of
+  // the proxy's free-tier counters apply to it — not the monthly_cost meter
+  // (S937), and not the task counters either (monthly_tasks + daily_tasks, S939).
+  // A byok device that advanced any free-tier counter would (a) be metered for
+  // traffic Bishop never pays for and (b) eventually trip a cap that was already
+  // byok-bypassed in evaluateCheck off a polluted meter. So a byok increment
+  // touches NO free-tier counter. Defaults to "managed" (the metered path) when
+  // omitted, preserving the existing free-tier wall.
   account_mode?: "managed" | "byok";
 }
 
@@ -181,16 +185,19 @@ export function evaluateCheck(
   const projectedTasks = state.monthly_tasks + req.weight;
   const projectedDaily = state.daily_tasks + req.weight;
 
-  // W38-S923/S937: a CONNECTED (byok) device pays its OWN provider, so the
-  // free-tier COST meters — both the monthly_cost cap (S937) and the daily_floor
-  // (S923) — must NOT gate it. Only managed/FREE devices are metered against the
-  // proxy's free-tier walls. The monthly_tasks cap is an abuse bound and STILL
-  // applies to byok (it is not a cost meter). Defaults to the metered path.
+  // W38-S923/S937/S939: a CONNECTED (byok) device pays its OWN provider, so NONE
+  // of the proxy's free-tier walls gate it — not the monthly_cost cap (S937), not
+  // the daily_floor (S923), and not the monthly_tasks cap (S939). All three are
+  // free-tier quota dimensions; a device off the free meter must clear every one
+  // of them on BOTH the check (here) and the increment (applyIncrement). Only
+  // managed/FREE devices are metered against these walls. Defaults to the metered
+  // path. (INVARIANT: if a new cap dimension is added it must be gated on !isByok
+  // too — see test/quota.test.ts "byok clears EVERY free-tier gate".)
   const isByok = req.account_mode === "byok";
   if (!isByok && capCostMicrocents !== null && projectedCost > capCostMicrocents) {
     return { ok: false, reason: "monthly_cost_exceeded" };
   }
-  if (cap.monthly_tasks !== null && projectedTasks > cap.monthly_tasks) {
+  if (!isByok && cap.monthly_tasks !== null && projectedTasks > cap.monthly_tasks) {
     return { ok: false, reason: "monthly_tasks_exceeded" };
   }
   if (!isByok && cap.daily_floor !== null && projectedDaily > cap.daily_floor) {
@@ -203,15 +210,19 @@ export function applyIncrement(
   state: QuotaState,
   req: IncrementRequest,
 ): QuotaState {
-  // W38-S937: byok inference cost does not touch the free-tier cost meter.
+  // W38-S937/S939: a byok device touches NO free-tier counter — not the cost
+  // meter (S937), and not the task counters (S939). Advancing them would meter a
+  // device that pays its own provider and could re-fire a cap that was already
+  // byok-bypassed in evaluateCheck off a polluted counter. Managed/FREE devices
+  // advance all three (unchanged, fail-closed).
   const isByok = req.account_mode === "byok";
   return {
     ...state,
     monthly_cost_microcents: isByok
       ? state.monthly_cost_microcents
       : state.monthly_cost_microcents + req.cost_microcents,
-    monthly_tasks: state.monthly_tasks + req.weight,
-    daily_tasks: state.daily_tasks + req.weight,
+    monthly_tasks: isByok ? state.monthly_tasks : state.monthly_tasks + req.weight,
+    daily_tasks: isByok ? state.daily_tasks : state.daily_tasks + req.weight,
   };
 }
 
