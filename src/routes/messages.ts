@@ -22,10 +22,11 @@ import { extractUsageFromSSE } from "../lib/sse-usage";
 import { classify } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
 import {
-  computeCostCents,
+  computeCostMicroCents,
   modelFamily,
   taskWeight,
   TIER_CAPS,
+  MICROCENTS_PER_CENT,
   type ModelFamily,
   type Tier,
 } from "../lib/pricing";
@@ -277,7 +278,9 @@ export async function handleMessages(
         // observer failure must not affect the client; counters fall back to 0.
       }
     }
-    const costCents = computeCostCents(family, usage);
+    // W38-S938: meter the EXACT per-request cost in micro-cents (no per-request
+    // ceil-to-1¢ floor) — the floor inflated the free-tier monthly_cost meter ~20×.
+    const costMicroCents = computeCostMicroCents(family, usage);
     if (upstream.ok) {
       try {
         await quotaStub.fetch("https://internal/increment", {
@@ -286,7 +289,7 @@ export async function handleMessages(
           // W38-S937: forward account_mode so a CONNECTED (byok) device's
           // inference cost does not advance the proxy's free-tier monthly_cost
           // meter (it pays its own provider). Mirrors the S923 /check forwarding.
-          body: JSON.stringify({ weight, cost_cents: costCents, account_mode: accountMode }),
+          body: JSON.stringify({ weight, cost_microcents: costMicroCents, account_mode: accountMode }),
         });
       } catch {
         // best-effort: increment failure is logged below by event_type=error.
@@ -356,9 +359,12 @@ export async function buildResponseHeaders(
 
   const cap = TIER_CAPS[tier];
   if (state && cap.monthly_cost_cents !== null) {
+    // W38-S938: the meter is in micro-cents; the user-visible header is in cents.
+    // Ceil the accumulated micro-cents to whole cents at DISPLAY only.
+    const usedCents = Math.ceil(state.monthly_cost_microcents / MICROCENTS_PER_CENT);
     h.set(
       "X-Bishop-Quota-Remaining",
-      String(Math.max(0, cap.monthly_cost_cents - state.monthly_cost_cents)),
+      String(Math.max(0, cap.monthly_cost_cents - usedCents)),
     );
   } else {
     h.set("X-Bishop-Quota-Remaining", "unlimited");

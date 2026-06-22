@@ -66,6 +66,23 @@ export interface TierCap {
 
 export type Tier = "free" | "solo" | "studio";
 
+/**
+ * Fine money unit. The monthly_cost meter accumulates in micro-cents
+ * (cents × 10,000, integer) so that a typical sub-cent request is metered at
+ * its TRUE cost instead of being floored to a whole cent per request.
+ *
+ * W38-S938: the old per-request `Math.ceil`-to-whole-cent minimum
+ * (computeCostCents) inflated the free-tier monthly_cost meter ~20× — a ~0.04¢
+ * task billed ≥1¢, so the free $1.00 (100¢) cost cap fired at ~100 requests,
+ * well before the intended 200-task cap (a device hit monthly_cost_exceeded at
+ * ~$0.05 of real spend). Metering in micro-cents drops that floor: the cap now
+ * reflects real projected spend and the 200-task cap correctly bites first for
+ * tiny tasks, while a genuinely expensive task still accrues real cost toward $1.
+ * Tier caps stay AUTHORED in cents (below); they are converted to micro-cents
+ * (× this constant) at compare time, and /v1/quota ceils back to cents at DISPLAY.
+ */
+export const MICROCENTS_PER_CENT = 10_000;
+
 export const TIER_CAPS: Record<Tier, TierCap> = {
   free:   { monthly_cost_cents: 100, monthly_tasks: 200,  daily_floor: 30 },
   solo:   { monthly_cost_cents: 480, monthly_tasks: 2000, daily_floor: null },
@@ -102,11 +119,31 @@ export function modelFamily(modelId: string): ModelFamily | null {
  */
 export function computeCostCents(family: ModelFamily, usage: Usage): number {
   const row = PRICING[family];
-  const microCents =
+  const centsTimes1M =
     row.input_cents_per_1m * usage.input_tokens +
     row.output_cents_per_1m * usage.output_tokens +
     row.cached_cents_per_1m * usage.cached_tokens;
-  return Math.ceil(microCents / 1_000_000);
+  return Math.ceil(centsTimes1M / 1_000_000);
+}
+
+/**
+ * Compute the EXACT per-request cost in micro-cents (cents × 10,000, integer),
+ * WITHOUT the per-request ceil-to-whole-cent minimum that computeCostCents
+ * applies. This is the value the monthly_cost meter accumulates (W38-S938).
+ *
+ * The token-rate product is in cents-per-1M space (cents × 1,000,000); dividing
+ * by 100 converts to micro-cents (× 10,000 / 1,000,000 = / 100). We `Math.ceil`
+ * only to the nearest whole micro-cent — a sub-0.0001¢ rounding that preserves
+ * integer-money discipline (no floats) without re-introducing a 1¢-per-request
+ * floor. So a ~0.04¢ task accrues ~400 micro-cents, not 10,000.
+ */
+export function computeCostMicroCents(family: ModelFamily, usage: Usage): number {
+  const row = PRICING[family];
+  const centsTimes1M =
+    row.input_cents_per_1m * usage.input_tokens +
+    row.output_cents_per_1m * usage.output_tokens +
+    row.cached_cents_per_1m * usage.cached_tokens;
+  return Math.ceil(centsTimes1M / 100);
 }
 
 export function taskWeight(family: ModelFamily): number {

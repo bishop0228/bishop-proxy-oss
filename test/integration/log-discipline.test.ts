@@ -58,7 +58,7 @@ function makeNamespace(handler: (req: Request) => Promise<Response> | Response):
 }
 
 interface QuotaState {
-  monthly_cost_cents: number;
+  monthly_cost_microcents: number;
   monthly_tasks: number;
   daily_floor_used: number;
   period_month: string;
@@ -75,7 +75,7 @@ function makeEnv(opts: {
   const tier = opts.tier ?? "free";
   const quotaCheckOk = opts.quotaCheckOk ?? true;
   const quotaState = opts.quotaState ?? {
-    monthly_cost_cents: 0,
+    monthly_cost_microcents: 0,
     monthly_tasks: 0,
     daily_floor_used: 0,
     period_month: "2026-04",

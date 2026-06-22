@@ -24,7 +24,7 @@ import type { Env } from "../index";
 import { verifyBearer } from "../lib/auth";
 import type { TierRecord } from "../durable-objects/tier-cache";
 import type { QuotaState } from "../durable-objects/quota-store";
-import { TIER_CAPS, type Tier } from "../lib/pricing";
+import { TIER_CAPS, MICROCENTS_PER_CENT, type Tier } from "../lib/pricing";
 
 const QUOTA_CACHE_TTL_SECONDS = 30;
 
@@ -63,11 +63,15 @@ export async function handleQuotaGet(
   const quota = (await quotaResp.json()) as QuotaState;
 
   const cap = TIER_CAPS[tier];
+  // W38-S938: the meter accumulates in micro-cents; the /v1/quota response keeps
+  // its cents shape. Derive cents by ceiling the micro-cent total at DISPLAY only
+  // (never a per-request floor). The cap table stays authored in cents.
+  const monthlyCostCentsUsed = Math.ceil(quota.monthly_cost_microcents / MICROCENTS_PER_CENT);
   const payload = {
     tier,
     valid_until: validUntil,
-    monthly_cost_cents_used: quota.monthly_cost_cents,
-    monthly_cost_cents_remaining: remaining(quota.monthly_cost_cents, cap.monthly_cost_cents),
+    monthly_cost_cents_used: monthlyCostCentsUsed,
+    monthly_cost_cents_remaining: remaining(monthlyCostCentsUsed, cap.monthly_cost_cents),
     monthly_tasks_used: quota.monthly_tasks,
     monthly_tasks_remaining: remaining(quota.monthly_tasks, cap.monthly_tasks),
     daily_tasks_used: quota.daily_tasks,

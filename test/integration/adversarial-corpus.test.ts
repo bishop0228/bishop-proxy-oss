@@ -88,7 +88,7 @@ function baseNamespaces() {
     }
     return new Response(
       JSON.stringify({
-        monthly_cost_cents: 0,
+        monthly_cost_microcents: 0,
         monthly_tasks: 0,
         daily_floor_used: 0,
         period_month: "2026-05",

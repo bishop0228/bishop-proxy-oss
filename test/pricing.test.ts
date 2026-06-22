@@ -18,7 +18,9 @@ import {
   PRICING,
   TIER_CAPS,
   TASK_WEIGHTS,
+  MICROCENTS_PER_CENT,
   computeCostCents,
+  computeCostMicroCents,
   modelFamily,
   taskWeight,
 } from "../src/lib/pricing";
@@ -131,6 +133,81 @@ describe("computeCostCents", () => {
       cache_creation_input_tokens: 0,
     });
     expect(c).toBe(150);
+  });
+});
+
+// W38-S938: the monthly cost meter accumulates in micro-cents (cents × 10,000)
+// using the EXACT per-request cost — NO per-request ceil-to-1¢ minimum. This is
+// what fixes the ~20× free-tier over-count that fired the $1 cap at pennies.
+describe("computeCostMicroCents (W38-S938 — exact, no 1¢-per-request floor)", () => {
+  it("MICROCENTS_PER_CENT is 10,000", () => {
+    expect(MICROCENTS_PER_CENT).toBe(10_000);
+  });
+
+  it("haiku — 1M input tokens = 25¢ = 250,000 micro-cents", () => {
+    const m = computeCostMicroCents("haiku", {
+      input_tokens: 1_000_000,
+      output_tokens: 0,
+      cached_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(m).toBe(25 * MICROCENTS_PER_CENT);
+  });
+
+  it("a ~0.04¢ task accrues ~400 micro-cents (NOT the 10,000 the 1¢ floor billed)", () => {
+    // haiku 1600 input tokens: 25 cents/1M × 1600 = 40,000 (cents×1M) → 400 µ¢.
+    const m = computeCostMicroCents("haiku", {
+      input_tokens: 1600,
+      output_tokens: 0,
+      cached_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(m).toBe(400);
+    // the legacy whole-cent path would floor the SAME task to 1¢ = 10,000 µ¢.
+    expect(computeCostCents("haiku", {
+      input_tokens: 1600, output_tokens: 0, cached_tokens: 0, cache_creation_input_tokens: 0,
+    }) * MICROCENTS_PER_CENT).toBe(10_000);
+  });
+
+  it("a single-token request is NOT floored to 1¢ — it is ~1 micro-cent", () => {
+    const m = computeCostMicroCents("haiku", {
+      input_tokens: 1,
+      output_tokens: 0,
+      cached_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    // 25 × 1 = 25 (cents×1M) → ceil(25/100) = 1 µ¢. Far below the old 10,000 floor.
+    expect(m).toBe(1);
+  });
+
+  it("zero usage = 0 micro-cents", () => {
+    const m = computeCostMicroCents("haiku", {
+      input_tokens: 0,
+      output_tokens: 0,
+      cached_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(m).toBe(0);
+  });
+
+  it("opus — 1M input + 1M output = 9000¢ = 90,000,000 micro-cents", () => {
+    const m = computeCostMicroCents("opus", {
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cached_tokens: 0,
+      cache_creation_input_tokens: 0,
+    });
+    expect(m).toBe(9000 * MICROCENTS_PER_CENT);
+  });
+
+  it("returns an integer (no float money)", () => {
+    const m = computeCostMicroCents("sonnet", {
+      input_tokens: 7,
+      output_tokens: 13,
+      cached_tokens: 3,
+      cache_creation_input_tokens: 0,
+    });
+    expect(Number.isInteger(m)).toBe(true);
   });
 });
 
