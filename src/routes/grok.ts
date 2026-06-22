@@ -16,7 +16,6 @@
 import type { Env } from "../index";
 import { resolveUpstreamKey, rebuildOpenAIHeaders } from "../lib/headers";
 import { classify } from "../lib/classifier";
-import { logEvent, type ProxyLogEvent } from "../lib/log";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -28,6 +27,7 @@ import {
   emitError,
   emitRateLimit,
   emitResponse,
+  classificationGate,
 } from "./messages";
 
 interface VerifyTokenResult {
@@ -123,64 +123,8 @@ export async function handleGrok(
 
   // Step 5 — content classifier (SAME classify as messages.ts).
   const cls = await classify(body, env);
-  if (cls.decision === "allow") {
-    const allowEvent: ProxyLogEvent = {
-      event_type: "classification",
-      timestamp: new Date().toISOString(),
-      request_id: requestId,
-      token_id: tokenId,
-      ip,
-      request_size_bytes: requestSize,
-      response_status: 0,
-      response_size_bytes: 0,
-      token_count_in: null,
-      token_count_out: null,
-      cached_tokens: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      classification_decision: "allow",
-      classification_category: cls.category,
-      classifier_error_reason: cls.classifier_error_reason,
-      duration_ms: Date.now() - startedAt,
-      upstream_status: null,
-      cap_type_hit: null,
-    };
-    try { logEvent(allowEvent); } catch { /* shape error is itself an audit signal */ }
-  }
-  if (cls.decision === "block") {
-    const blockEvent: ProxyLogEvent = {
-      event_type: "classification",
-      timestamp: new Date().toISOString(),
-      request_id: requestId,
-      token_id: tokenId,
-      ip,
-      request_size_bytes: requestSize,
-      response_status: 451,
-      response_size_bytes: 0,
-      token_count_in: null,
-      token_count_out: null,
-      cached_tokens: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      classification_decision: "block",
-      classification_category: cls.category,
-      classifier_error_reason: cls.classifier_error_reason,
-      duration_ms: Date.now() - startedAt,
-      upstream_status: null,
-      cap_type_hit: null,
-    };
-    try { logEvent(blockEvent); } catch { /* shape error is itself an audit signal */ }
-    return new Response(
-      JSON.stringify({
-        type: "error",
-        error: {
-          type: "content_policy_violation",
-          message: "Request blocked by content classifier.",
-        },
-      }),
-      { status: 451, headers: { "content-type": "application/json" } },
-    );
-  }
+  const gateResponse = classificationGate(cls, requestId, tokenId, ip, requestSize, startedAt);
+  if (gateResponse) return gateResponse;
 
   // Step 6 — entitlement gate (fail-closed). Managed → operator XAI_API_KEY.
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";

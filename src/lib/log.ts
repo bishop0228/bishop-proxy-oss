@@ -26,7 +26,7 @@ export interface ProxyLogEvent {
   cached_tokens: number | null;
   cache_creation_input_tokens: number | null;
   cache_read_input_tokens: number | null;
-  classification_decision: "allow" | "block" | "review" | null;
+  classification_decision: "allow" | "block" | "review" | "unavailable" | null;
   classification_category: "safe" | "profanity" | "pii" | "weapons" | "csam" | "self_harm" | "other" | null;
   duration_ms: number;
   upstream_status: number | null;
@@ -66,7 +66,7 @@ const EVENT_TYPES = new Set<string>([
   "error",
 ]);
 
-const CLASSIFICATION_DECISIONS = new Set<string>(["allow", "block", "review"]);
+const CLASSIFICATION_DECISIONS = new Set<string>(["allow", "block", "review", "unavailable"]);
 
 const CLASSIFICATION_CATEGORIES = new Set<string>([
   "safe",

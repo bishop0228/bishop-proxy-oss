@@ -19,7 +19,7 @@
 import type { Env } from "../index";
 import { rebuildHeaders, resolveUpstreamKey } from "../lib/headers";
 import { extractUsageFromSSE } from "../lib/sse-usage";
-import { classify } from "../lib/classifier";
+import { classify, type ClassifierResult } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
 import {
   computeCostMicroCents,
@@ -168,70 +168,11 @@ export async function handleMessages(
     );
   }
 
-  // Step 5 — content classifier.
+  // Step 5 — content classifier. Allow → proceed; CSAM verdict → 451; classifier
+  // ERROR (timeout/binding/config) → retryable 503. Single shared gate (W38-S949).
   const cls = await classify(body, env);
-
-  // Step 5.5a — allow-path audit event: emit classification record for every passing request.
-  if (cls.decision === "allow") {
-    const allowEvent: ProxyLogEvent = {
-      event_type: "classification",
-      timestamp: new Date().toISOString(),
-      request_id: requestId,
-      token_id: tokenId,
-      ip,
-      request_size_bytes: requestSize,
-      response_status: 0,
-      response_size_bytes: 0,
-      token_count_in: null,
-      token_count_out: null,
-      cached_tokens: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      classification_decision: "allow",
-      classification_category: cls.category,
-      classifier_error_reason: cls.classifier_error_reason,
-      duration_ms: Date.now() - startedAt,
-      upstream_status: null,
-      cap_type_hit: null,
-    };
-    try { logEvent(allowEvent); } catch { /* shape error is itself an audit signal */ }
-  }
-
-  // Step 5.5b — block path: fail-closed on any non-allow decision.
-  if (cls.decision === "block") {
-    const blockEvent: ProxyLogEvent = {
-      event_type: "classification",
-      timestamp: new Date().toISOString(),
-      request_id: requestId,
-      token_id: tokenId,
-      ip,
-      request_size_bytes: requestSize,
-      response_status: 451,
-      response_size_bytes: 0,
-      token_count_in: null,
-      token_count_out: null,
-      cached_tokens: null,
-      cache_creation_input_tokens: null,
-      cache_read_input_tokens: null,
-      classification_decision: "block",
-      classification_category: cls.category,
-      classifier_error_reason: cls.classifier_error_reason,
-      duration_ms: Date.now() - startedAt,
-      upstream_status: null,
-      cap_type_hit: null,
-    };
-    try { logEvent(blockEvent); } catch { /* shape error is itself an audit signal */ }
-    return new Response(
-      JSON.stringify({
-        type: "error",
-        error: {
-          type: "content_policy_violation",
-          message: "Request blocked by content classifier.",
-        },
-      }),
-      { status: 451, headers: { "content-type": "application/json" } },
-    );
-  }
+  const gateResponse = classificationGate(cls, requestId, tokenId, ip, requestSize, startedAt);
+  if (gateResponse) return gateResponse;
 
   // Step 6 — BYOK entitlement gate: resolve upstream key (fail-closed).
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
@@ -415,6 +356,95 @@ export function capTypeFromReason(reason: string | undefined): ProxyLogEvent["ca
 export function capTypeHeaderValue(cap: ProxyLogEvent["cap_type_hit"]): string {
   if (cap === "daily_floor") return "daily";
   return cap ?? "null";
+}
+
+// emitClassification — the single classification audit emitter. response_status
+// distinguishes the three outcomes in the ledger: 0 (allow), 451 (CSAM block
+// VERDICT), 503 (classifier "unavailable" ERROR). classification_decision and
+// classifier_error_reason are taken straight off the ClassifierResult so an
+// availability failure is never recorded as a content-policy block.
+function emitClassification(
+  cls: ClassifierResult,
+  requestId: string,
+  tokenId: string | null,
+  ip: string,
+  requestSize: number,
+  startedAt: number,
+  responseStatus: number,
+): void {
+  const event: ProxyLogEvent = {
+    event_type: "classification",
+    timestamp: new Date().toISOString(),
+    request_id: requestId,
+    token_id: tokenId,
+    ip,
+    request_size_bytes: requestSize,
+    response_status: responseStatus,
+    response_size_bytes: 0,
+    token_count_in: null,
+    token_count_out: null,
+    cached_tokens: null,
+    cache_creation_input_tokens: null,
+    cache_read_input_tokens: null,
+    classification_decision: cls.decision,
+    classification_category: cls.category,
+    classifier_error_reason: cls.classifier_error_reason,
+    duration_ms: Date.now() - startedAt,
+    upstream_status: null,
+    cap_type_hit: null,
+  };
+  try { logEvent(event); } catch { /* shape error is itself an audit signal */ }
+}
+
+// classificationGate — the SINGLE decision→Response mapping for the content
+// classifier, shared by EVERY upstream route (W38-S949). Factoring it here means
+// no route can drift back onto the old hand-rolled "block-on-error → 451" path
+// (the recurring N-route-skip failure mode).
+//
+//   "allow"       → emit allow audit, return null (caller proceeds to upstream).
+//   "block"       → CSAM VERDICT. emit block audit (451), return a 451
+//                   content_policy_violation Response. UNCHANGED.
+//   "unavailable" → classifier ERRORED (timeout / ai_binding_error / config).
+//                   emit unavailable audit (503), return a RETRYABLE 503
+//                   classifier_unavailable Response. Fail-closed: NOT forwarded.
+//   anything else → treated as fail-closed 451 (defensive; never produced today).
+export function classificationGate(
+  cls: ClassifierResult,
+  requestId: string,
+  tokenId: string | null,
+  ip: string,
+  requestSize: number,
+  startedAt: number,
+): Response | null {
+  if (cls.decision === "allow") {
+    emitClassification(cls, requestId, tokenId, ip, requestSize, startedAt, 0);
+    return null;
+  }
+  if (cls.decision === "unavailable") {
+    emitClassification(cls, requestId, tokenId, ip, requestSize, startedAt, 503);
+    return new Response(
+      JSON.stringify({
+        type: "error",
+        error: {
+          type: "classifier_unavailable",
+          message: "Content classifier temporarily unavailable. Please retry.",
+        },
+      }),
+      { status: 503, headers: { "content-type": "application/json", "retry-after": "1" } },
+    );
+  }
+  // CSAM block verdict (or any defensive non-allow) → 451 content-policy.
+  emitClassification(cls, requestId, tokenId, ip, requestSize, startedAt, 451);
+  return new Response(
+    JSON.stringify({
+      type: "error",
+      error: {
+        type: "content_policy_violation",
+        message: "Request blocked by content classifier.",
+      },
+    }),
+    { status: 451, headers: { "content-type": "application/json" } },
+  );
 }
 
 export function emitError(

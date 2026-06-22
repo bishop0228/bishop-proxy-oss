@@ -60,7 +60,40 @@ function mockClassify(): ClassifierResult {
   return { decision: "allow", category: null, classifier_error_reason: null };
 }
 
+// Per-attempt timeout. Kept at the prior single-attempt ceiling: the bounded
+// retry (below) fires ONLY on a transient error, so the happy path is unchanged
+// and the worst case is two attempts + one short backoff (~4.25s wall) — well
+// within the Workers wall-clock budget (the AI/fetch await is I/O, not CPU).
 const CLASSIFY_TIMEOUT_MS = 2000;
+
+// Backoff between the two attempts when the first fails transiently.
+const CLASSIFY_RETRY_BACKOFF_MS = 250;
+
+// One classify attempt. Distinguishes a clean verdict (ok) from a TRANSIENT
+// error (timeout / ai_binding_error) so the retry wrapper can decide whether to
+// re-try. Note: this is an ERROR vs VERDICT split — a parsed "block"/"allow" is
+// a verdict (ok:true), never a transient error.
+type AttemptOutcome =
+  | { ok: true; result: Pick<ClassifierResult, "decision" | "category"> }
+  | { ok: false; reason: NonNullable<ClassifierResult["classifier_error_reason"]> };
+
+// Runs a single attempt, then — on a transient error only — retries once after a
+// short backoff. A persistent verdict short-circuits (no retry). If both
+// attempts error transiently, returns the fail-closed "unavailable" envelope
+// (the request is NOT forwarded — §3.6 fail-closed is preserved). This is the
+// W38-S949 split: an availability failure is "unavailable" (→ retryable 503),
+// NOT "block" (→ 451 content-policy verdict).
+async function classifyWithRetry(attempt: () => Promise<AttemptOutcome>): Promise<ClassifierResult> {
+  let outcome = await attempt();
+  if (!outcome.ok) {
+    await new Promise((r) => setTimeout(r, CLASSIFY_RETRY_BACKOFF_MS));
+    outcome = await attempt();
+  }
+  if (outcome.ok) {
+    return { ...outcome.result, classifier_error_reason: null };
+  }
+  return { decision: "unavailable", category: null, classifier_error_reason: outcome.reason };
+}
 
 export const VETTED_CLASSIFIER_MODELS = new Set(["@cf/meta/llama-guard-3-8b"]);
 const DEFAULT_CLASSIFIER_MODEL = "@cf/meta/llama-guard-3-8b";
@@ -122,34 +155,34 @@ export function classifierMessagesFromBody(
 }
 
 // Routes the classify request through a self-hosted classifier endpoint (CLASSIFIER_URL).
-// Mirrors the Cloudflare AI binding path: same timeout, same fail-closed envelope.
+// Mirrors the Cloudflare AI binding path: same per-attempt timeout, same bounded
+// retry, same fail-closed "unavailable" envelope on persistent transient error.
 export async function classifyViaUrl(
   messages: Array<{ role: string; content: string }>,
   env: Env,
 ): Promise<ClassifierResult> {
   const url = env.CLASSIFIER_URL!;
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("classifier_timeout")), CLASSIFY_TIMEOUT_MS),
-  );
-  try {
-    const fetchPromise = fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ messages }),
-    }).then(async (res) => {
-      const json = (await res.json()) as LlamaGuardResponse;
-      return json;
-    });
-    const result = await Promise.race([fetchPromise, timeoutPromise]);
-    return { ...parseLlamaGuardResponse(result.response), classifier_error_reason: null };
-  } catch (err: unknown) {
-    const isTimeout = err instanceof Error && err.message === "classifier_timeout";
-    return {
-      decision: "block",
-      category: null,
-      classifier_error_reason: isTimeout ? "timeout" : "ai_binding_error",
-    };
-  }
+  const attempt = async (): Promise<AttemptOutcome> => {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("classifier_timeout")), CLASSIFY_TIMEOUT_MS),
+    );
+    try {
+      const fetchPromise = fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ messages }),
+      }).then(async (res) => {
+        const json = (await res.json()) as LlamaGuardResponse;
+        return json;
+      });
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
+      return { ok: true, result: parseLlamaGuardResponse(result.response) };
+    } catch (err: unknown) {
+      const isTimeout = err instanceof Error && err.message === "classifier_timeout";
+      return { ok: false, reason: isTimeout ? "timeout" : "ai_binding_error" };
+    }
+  };
+  return classifyWithRetry(attempt);
 }
 
 export async function classify(
@@ -162,8 +195,9 @@ export async function classify(
 
   const model = resolveModel(env);
   if (model === null) {
-    // Unvetted CLASSIFIER_MODEL — fail closed.
-    return { decision: "block", category: null, classifier_error_reason: "ai_binding_error" };
+    // Unvetted CLASSIFIER_MODEL — a CONFIG error (persistent), not a transient
+    // blip → fail-closed "unavailable" (503) with NO retry.
+    return { decision: "unavailable", category: null, classifier_error_reason: "ai_binding_error" };
   }
 
   const messages = classifierMessagesFromBody(body);
@@ -173,30 +207,30 @@ export async function classify(
     return classifyViaUrl(messages, env);
   }
 
-  // Fail-closed if AI binding is missing or misconfigured.
+  // Missing AI binding — a CONFIG error (persistent) → fail-closed "unavailable"
+  // (503) with NO retry (a missing binding never recovers on a re-try).
   if (!env.AI) {
-    return { decision: "block", category: null, classifier_error_reason: "ai_binding_error" };
+    return { decision: "unavailable", category: null, classifier_error_reason: "ai_binding_error" };
   }
 
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error("classifier_timeout")), CLASSIFY_TIMEOUT_MS),
-  );
-
-  try {
-    const result = await Promise.race([
-      (env.AI as unknown as { run: AiRunFn }).run(
-        model,
-        { messages },
-      ),
-      timeoutPromise,
-    ]);
-    return { ...parseLlamaGuardResponse(result.response), classifier_error_reason: null };
-  } catch (err: unknown) {
-    const isTimeout = err instanceof Error && err.message === "classifier_timeout";
-    return {
-      decision: "block",
-      category: null,
-      classifier_error_reason: isTimeout ? "timeout" : "ai_binding_error",
-    };
-  }
+  // Transient errors (timeout / ai_binding_error from .run()) get one bounded retry.
+  const attempt = async (): Promise<AttemptOutcome> => {
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("classifier_timeout")), CLASSIFY_TIMEOUT_MS),
+    );
+    try {
+      const result = await Promise.race([
+        (env.AI as unknown as { run: AiRunFn }).run(
+          model,
+          { messages },
+        ),
+        timeoutPromise,
+      ]);
+      return { ok: true, result: parseLlamaGuardResponse(result.response) };
+    } catch (err: unknown) {
+      const isTimeout = err instanceof Error && err.message === "classifier_timeout";
+      return { ok: false, reason: isTimeout ? "timeout" : "ai_binding_error" };
+    }
+  };
+  return classifyWithRetry(attempt);
 }
