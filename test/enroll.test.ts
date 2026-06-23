@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 
 const TEST_VARS = {
   STRIPE_WEBHOOK_SECRET: "test_secret",
@@ -15,6 +16,7 @@ const TEST_VARS = {
   TARGET_ZERO_BITS: "8",
   TARGET_MEMORY_KIB: "8",
   CHALLENGE_TTL: "60",
+  ADMIN_TOKEN: "test_admin",
 };
 
 // Solve PoW with test params: m=8KiB, target=8 bits
@@ -85,6 +87,11 @@ describe("/v1/challenge + /v1/enroll", () => {
       vars: TEST_VARS,
       persist: false,
     });
+
+    // Self-isolate: the serial suite shares one on-disk AuthStoreDO across
+    // files, so clear BOTH the challenge nonce + enroll rate-limit counters
+    // before this file's challenge/enroll tests run.
+    await clearAuthRateLimits(worker);
   }, 30000);
 
   afterAll(async () => {

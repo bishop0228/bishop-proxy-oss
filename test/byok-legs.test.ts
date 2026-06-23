@@ -14,6 +14,7 @@ import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
 import { ALLOWED_OUTBOUND_HOSTS } from "../src/lib/outbound-allowlist";
 import { BYOK_UPSTREAM_SPECS } from "../src/lib/byok-specs";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 
 const PROXY_VARS_BASE = {
   STRIPE_WEBHOOK_SECRET: "test_secret",
@@ -169,28 +170,9 @@ describe("BYOK legs (/byok/<seg>/...)", () => {
       persist: false,
     });
 
-    const today = new Date().toISOString().slice(0, 10);
-    const clearRes = await worker.fetch("/admin/rate-limit/clear", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-      body: JSON.stringify({ ip_prefix: "127.0.0", endpoint: "challenge", date: today }),
-    });
-    if (!clearRes.ok) {
-      const errBody = await clearRes.text();
-      throw new Error(`rate-limit clear failed: ${clearRes.status} ${errBody}`);
-    }
-    await clearRes.json();
-
-    const clearEnrollRes = await worker.fetch("/admin/rate-limit/clear", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-      body: JSON.stringify({ ip_prefix: "127.0.0", endpoint: "enroll", date: today }),
-    });
-    if (!clearEnrollRes.ok) {
-      const errBody = await clearEnrollRes.text();
-      throw new Error(`enroll rate-limit clear failed: ${clearEnrollRes.status} ${errBody}`);
-    }
-    await clearEnrollRes.json();
+    // Self-isolate against the serial suite's shared on-disk AuthStoreDO:
+    // clear BOTH the challenge nonce + enroll rate-limit counters.
+    await clearAuthRateLimits(worker);
 
     managedToken = await enroll(worker, "6".repeat(64));
     byokToken = await enroll(worker, "5".repeat(64), "byok");

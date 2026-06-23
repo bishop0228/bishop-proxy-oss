@@ -15,6 +15,7 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 import { ALLOWED_OUTBOUND_HOSTS } from "../src/lib/outbound-allowlist";
 import { sigv4Sign } from "../src/lib/sigv4";
 import { handleBedrock } from "../src/routes/bedrock";
@@ -276,16 +277,9 @@ describe("Bedrock BYOK leg (/byok/bedrock/...)", () => {
       persist: false,
     });
 
-    const today = new Date().toISOString().slice(0, 10);
-    for (const endpoint of ["challenge", "enroll"]) {
-      const r = await worker.fetch("/admin/rate-limit/clear", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-        body: JSON.stringify({ ip_prefix: "127.0.0", endpoint, date: today }),
-      });
-      if (!r.ok) throw new Error(`rate-limit clear failed for ${endpoint}: ${r.status}`);
-      await r.json();
-    }
+    // Self-isolate against the serial suite's shared on-disk AuthStoreDO:
+    // clear BOTH the challenge nonce + enroll rate-limit counters.
+    await clearAuthRateLimits(worker);
 
     managedToken = await enroll(worker, "e".repeat(64));
     byokToken = await enroll(worker, "f".repeat(64), "byok");

@@ -11,6 +11,7 @@
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 import { argon2id } from "@noble/hashes/argon2.js";
 
 const PROXY_VARS_BASE = {
@@ -136,21 +137,11 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
       persist: false,
     });
 
-    // Other test files accumulate challenge calls against the same AuthStoreDO
-    // state on disk (.wrangler/state persists across unstable_dev workers even
-    // with persist:false). Clear the counter before enrolling so we don't hit
-    // the 10/day rate limit.
-    const today = new Date().toISOString().slice(0, 10);
-    const clearRes = await worker.fetch("/admin/rate-limit/clear", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-      body: JSON.stringify({ ip_prefix: "127.0.0", endpoint: "challenge", date: today }),
-    });
-    if (!clearRes.ok) {
-      const errBody = await clearRes.text();
-      throw new Error(`rate-limit clear failed: ${clearRes.status} ${errBody}`);
-    }
-    await clearRes.json();
+    // Other test files accumulate challenge + enroll calls against the same
+    // AuthStoreDO state on disk (.wrangler/state persists across unstable_dev
+    // workers even with persist:false). Clear BOTH counters before enrolling so
+    // we don't hit the 10/24h rate limit regardless of file ordering.
+    await clearAuthRateLimits(worker);
 
     managedToken = await enroll(worker, "1".repeat(64));
     byokToken = await enroll(worker, "2".repeat(64), "byok");

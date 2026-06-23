@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 import type { AuthRecord } from "../src/durable-objects/auth-store";
 
 const PROXY_VARS_BASE = {
@@ -114,16 +115,9 @@ describe("AuthStoreDO: revoked verdict + admin gate", () => {
     });
     // .wrangler/state persists across unstable_dev workers even with persist:false;
     // clear rate-limit counters before enrolling to stay under the 10/day cap.
-    const today = new Date().toISOString().slice(0, 10);
-    for (const endpoint of ["challenge", "enroll"]) {
-      const r = await worker.fetch("/admin/rate-limit/clear", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-        body: JSON.stringify({ ip_prefix: "127.0.0", endpoint, date: today }),
-      });
-      if (!r.ok) throw new Error(`rate-limit clear failed for ${endpoint}: ${r.status}`);
-      await r.json();
-    }
+    // Self-isolate against the serial suite's shared on-disk AuthStoreDO:
+    // clear BOTH the challenge nonce + enroll rate-limit counters.
+    await clearAuthRateLimits(worker);
 
     // Fresh fingerprint not used by other test files (brief §3: use "1a".repeat(32))
     record = await enrollFull(worker, "1a".repeat(32));
@@ -241,16 +235,9 @@ describe("AuthStoreDO: expired verdict via TTL seam", () => {
     });
 
     // .wrangler/state persists; clear rate-limit counters before enrolling.
-    const today = new Date().toISOString().slice(0, 10);
-    for (const endpoint of ["challenge", "enroll"]) {
-      const r = await worker.fetch("/admin/rate-limit/clear", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-        body: JSON.stringify({ ip_prefix: "127.0.0", endpoint, date: today }),
-      });
-      if (!r.ok) throw new Error(`rate-limit clear failed for ${endpoint}: ${r.status}`);
-      await r.json();
-    }
+    // Self-isolate against the serial suite's shared on-disk AuthStoreDO:
+    // clear BOTH the challenge nonce + enroll rate-limit counters.
+    await clearAuthRateLimits(worker);
   }, 60000);
 
   afterAll(async () => {
@@ -298,16 +285,9 @@ describe("AuthStoreDO: FREE→CONNECTED relabel on re-enroll (W38-S872g)", () =>
       },
       persist: false,
     });
-    const today = new Date().toISOString().slice(0, 10);
-    for (const endpoint of ["challenge", "enroll"]) {
-      const r = await worker.fetch("/admin/rate-limit/clear", {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-admin-token": "test_admin" },
-        body: JSON.stringify({ ip_prefix: "127.0.0", endpoint, date: today }),
-      });
-      if (!r.ok) throw new Error(`rate-limit clear failed for ${endpoint}: ${r.status}`);
-      await r.json();
-    }
+    // Self-isolate against the serial suite's shared on-disk AuthStoreDO:
+    // clear BOTH the challenge nonce + enroll rate-limit counters.
+    await clearAuthRateLimits(worker);
   }, 60000);
 
   afterAll(async () => {

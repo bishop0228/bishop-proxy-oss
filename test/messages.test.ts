@@ -20,6 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
+import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 
 const PROXY_VARS_BASE = {
   STRIPE_WEBHOOK_SECRET: "test_secret",
@@ -28,6 +29,7 @@ const PROXY_VARS_BASE = {
   TARGET_MEMORY_KIB: "8",
   CHALLENGE_TTL: "60",
   MOCK_AI: "1",
+  ADMIN_TOKEN: "test_admin",
 };
 
 const TEST_VERSION = "test-client-0.1.0";
@@ -139,13 +141,14 @@ describe("POST /v1/messages", () => {
       vars: { ...PROXY_VARS_BASE, ANTHROPIC_BASE_URL: mockUrl, BISHOP_TEST_OUTBOUND_HOSTS: mock.address },
       persist: false,
     });
-    // Enroll a single shared token for all token-using tests. Each enroll
-    // costs one /v1/challenge call against the 10/24h-per-/24 rate limit;
-    // unstable_dev sends every request from 0.0.0.0, so all enrolls share
-    // one bucket. One enroll keeps us well under the cap.
+    // Self-isolate: the serial suite shares one on-disk AuthStoreDO across
+    // files, so clear BOTH the challenge nonce + enroll rate-limit counters
+    // before enrolling — don't depend on file ordering staying under the cap.
+    await clearAuthRateLimits(worker);
+    // Enroll a single shared token for all token-using tests.
     // Avoid fingerprints used by enroll.test.ts: "a"-"d".repeat(64). Pick a
-     // hex value distinct from any other test file that may share .wrangler
-     // state when vitest runs files in parallel.
+    // hex value distinct from any other test file that may share .wrangler
+    // state when vitest runs files in parallel.
     sharedToken = await enroll(worker, "e".repeat(64));
   }, 60000);
 
