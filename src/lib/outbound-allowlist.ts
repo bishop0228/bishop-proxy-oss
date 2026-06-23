@@ -201,6 +201,13 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // + pins the sha256 of an uncurated model before it is imported. Running total 81
   // = 32 provider + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
   "huggingface.co",
+  // ── W38-S964 (founder-approved 2026-06-23): 1 new BYOK completion upstream ──
+  // Sakana Fugu (cloud-only, OpenAI-compatible, subscription) — the /byok/sakana/
+  // completion leg (src/lib/byok-specs.ts) forwards to this single published API
+  // host. NOT model-registry / MCP — a model-inference upstream like the other 32
+  // provider hosts. Frozen exact-match host (length 81→82). Running total 82 = 33
+  // provider + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
+  "api.sakana.ai",
 ] as const);
 
 /**

@@ -164,4 +164,14 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     operatorKeyVar: "VOLCENGINE_ARK_API_KEY",
     baseUrlVar: "VOLCENGINE_ARK_BASE_URL",
   },
+
+  // W38-S964 — sakana — Sakana Fugu (cloud-only, OpenAI-compatible, subscription).
+  // Host api.sakana.ai (the single published API host — base_url
+  // https://api.sakana.ai/v1, Bearer key from the Sakana console; live-verified
+  // vs console.sakana.ai/get-started 2026-06-23). Added to ALLOWED_OUTBOUND_HOSTS.
+  sakana: {
+    upstreamHost: "api.sakana.ai",
+    operatorKeyVar: "SAKANA_API_KEY",
+    baseUrlVar: "SAKANA_BASE_URL",
+  },
 });

@@ -48,6 +48,9 @@ const SEGMENTS: Segment[] = [
   { seg: "groq",        keyVar: "GROQ_API_KEY",        opKey: "op-groq-zzz",        path: "/byok/groq/openai/v1/chat/completions"               },
   { seg: "together",    keyVar: "TOGETHER_API_KEY",    opKey: "op-together-zzz",    path: "/byok/together/v1/chat/completions"                  },
   { seg: "fireworks",   keyVar: "FIREWORKS_API_KEY",   opKey: "op-fireworks-zzz",   path: "/byok/fireworks/inference/v1/chat/completions"       },
+  // W38-S964 — Sakana Fugu (cloud-only, OpenAI-compatible). Exercises the new
+  // /byok/sakana/ leg: fail-closed without an upstream key + operator-key forward.
+  { seg: "sakana",      keyVar: "SAKANA_API_KEY",      opKey: "op-sakana-zzz",      path: "/byok/sakana/v1/chat/completions"                    },
 ];
 
 function fromHex(hex: string): Uint8Array {

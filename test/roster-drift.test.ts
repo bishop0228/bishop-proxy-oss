@@ -85,8 +85,9 @@ describe("roster-drift: proxy routed roster ⊇ daemon universe − carve-outs",
     expect(carveouts.length).toBeGreaterThan(0);
   });
 
-  it("fixture byok_providers count matches daemon universe (26 BYOK)", () => {
-    expect((fixture.byok_providers as string[]).length).toBe(26);
+  it("fixture byok_providers count matches daemon universe (27 BYOK)", () => {
+    // W38-S964 added sakana_fugu (26 → 27).
+    expect((fixture.byok_providers as string[]).length).toBe(27);
   });
 
   it("fixture oauth_providers count matches daemon universe (5 OAuth)", () => {

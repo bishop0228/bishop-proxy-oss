@@ -107,6 +107,9 @@ export const MODEL_LIST_SPECS: Readonly<Record<string, ModelListSpec>> = Object.
   nvidia_nim:    { upstreamHost: byokHost("nvidia"),     modelListPath: "/v1/models",           auth: "bearer", credentialSource: "forwarded" },
   zhipu_glm:     { upstreamHost: byokHost("zhipu"),      modelListPath: "/api/paas/v4/models",  auth: "bearer", credentialSource: "forwarded" },
   groq:          { upstreamHost: byokHost("groq"),       modelListPath: "/openai/v1/models",    auth: "bearer", credentialSource: "forwarded" },
+  // W38-S964 — Sakana Fugu exposes an OpenAI-compatible Models API (host single-
+  // sourced from the byok sakana leg → api.sakana.ai; zero new egress here).
+  sakana_fugu:   { upstreamHost: byokHost("sakana"),     modelListPath: "/v1/models",           auth: "bearer", credentialSource: "forwarded" },
   // qwen_alibaba: dashscope is NOT a /byok/ leg (its OAuth path is qwen.ts); the
   // host dashscope-intl.aliyuncs.com is already allowlisted for the qwen completion.
   qwen_alibaba:  { upstreamHost: "dashscope-intl.aliyuncs.com", modelListPath: "/compatible-mode/v1/models", auth: "bearer", credentialSource: "forwarded" },

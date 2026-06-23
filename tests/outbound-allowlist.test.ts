@@ -257,7 +257,9 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("quickbooks.api.intuit.com");
     // W38-S868 §9.3.8c governed HuggingFace BYO-model host (§3.2 /model-hf/ leg).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("huggingface.co");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(81);
+    // W38-S964 — Sakana Fugu completion upstream (cloud-only, /byok/sakana/ leg).
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.sakana.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(82);
   });
 });
 

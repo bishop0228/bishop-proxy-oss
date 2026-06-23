@@ -405,7 +405,7 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
 
   // ── Probe 7: allowlist length sentinel (§3.2 no-runtime-widen) ───────
 
-  it("ALLOWED_OUTBOUND_HOSTS length === 81 + github host already present", () => {
+  it("ALLOWED_OUTBOUND_HOSTS length === 82 + github host already present", () => {
     // §1.18.15 itself added NO host (api.githubcopilot.com was already present
     // for the §1.17.16 GitHub Copilot OAuth leg; the MCP leg reuses it).
     // W38-S731 Block 4 added the 49 verified MCP egress hosts (32→81); W38-S734
@@ -414,8 +414,9 @@ describe("MCP-forward egress leg (/mcp/<server_id>)", () => {
     // model-registry host (registry.ollama.ai) → 77; W38-S831 S6b added 3
     // worker-egress fixed hosts (people.googleapis.com / api.xero.com /
     // quickbooks.api.intuit.com) → 80; W38-S868 §9.3.8c added 1 governed
-    // HuggingFace BYO-model host (huggingface.co) → 81. Still no runtime widen.
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(81);
+    // HuggingFace BYO-model host (huggingface.co) → 81; W38-S964 added 1 BYOK
+    // completion upstream (api.sakana.ai) → 82. Still no runtime widen.
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(82);
     expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("api.githubcopilot.com")).toBe(true);
   });
 
