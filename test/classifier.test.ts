@@ -50,6 +50,24 @@ describe("classifierMessagesFromBody — both request shapes", () => {
     ).toEqual([{ role: "user", content: "summarize this" }]);
   });
 
+  it("native Gemini contents: extracts parts text; 'model' role → assistant (W38-S970)", () => {
+    // Without this branch a native generateContent request classifies an EMPTY
+    // conversation — the un-classified gap the native route would otherwise open.
+    expect(
+      classifierMessagesFromBody({
+        contents: [
+          { role: "user", parts: [{ text: "first" }, { text: "second" }] },
+          { role: "model", parts: [{ text: "reply" }] },
+          { parts: [{ text: "no-role-defaults-to-user" }] },
+        ],
+      }),
+    ).toEqual([
+      { role: "user", content: "first\nsecond" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "no-role-defaults-to-user" },
+    ]);
+  });
+
   it("neither shape → [] (unchanged empty behavior)", () => {
     expect(classifierMessagesFromBody({ model: "x" })).toEqual([]);
   });

@@ -27,6 +27,7 @@ import { handleChatCompletions } from "./routes/chat-completions";
 import { handleGrok } from "./routes/grok";
 import { handleQwen } from "./routes/qwen";
 import { handleGemini } from "./routes/gemini";
+import { handleGeminiNative } from "./routes/gemini-native";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -60,6 +61,7 @@ export interface Env {
   QWEN_BASE_URL?: string;
   GEMINI_API_KEY?: string;
   GEMINI_BASE_URL?: string;
+  GEMINI_NATIVE_BASE_URL?: string;
   MISTRAL_API_KEY?: string;
   MISTRAL_BASE_URL?: string;
   DEEPSEEK_API_KEY?: string;
@@ -223,6 +225,16 @@ export default {
     }
     if (request.method === "POST" && url.pathname === "/v1/gemini/chat/completions") {
       return handleGemini(request, env, ctx);
+    }
+    // W38-S970 — NATIVE Google Gemini generateContent route. The daemon's Gemini
+    // adapter speaks the native protocol (model in the path); this gives it the
+    // proxy hop it always needed (was a 404→mock-fall regression). Host frozen
+    // server-side; only the path-validated model id varies.
+    if (
+      request.method === "POST" &&
+      /^\/v1beta\/models\/[A-Za-z0-9._-]+:generateContent$/.test(url.pathname)
+    ) {
+      return handleGeminiNative(request, env, ctx);
     }
     // W38-S822-FIX (S5b-1) — server_id-keyed generic forward egress route. The
     // worker-microVM's vsock relay forwards a guest's outbound request here; the

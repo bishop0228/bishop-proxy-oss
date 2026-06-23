@@ -151,6 +151,34 @@ export function classifierMessagesFromBody(
         return { role: it.role as "user" | "assistant", content };
       });
   }
+  // NATIVE Google Gemini shape (`…/v1beta/models/{model}:generateContent`):
+  // `contents` is a turn list, each turn `{ role?: "user"|"model", parts: [{text}] }`.
+  // Without this branch a native generateContent request yields an EMPTY conversation
+  // → the same un-classified gap the `input` branch closes for the Responses API.
+  // ("model" is Gemini's assistant role; map it to "assistant".)
+  if (Array.isArray(body.contents)) {
+    return (body.contents as Array<Record<string, unknown>>)
+      .filter((t) => t && typeof t === "object")
+      .map((t) => {
+        const role = t.role === "model" ? "assistant" : "user";
+        const parts = t.parts;
+        let content: string;
+        if (Array.isArray(parts)) {
+          content = parts
+            .map((p) =>
+              p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string"
+                ? ((p as { text: string }).text)
+                : JSON.stringify(p),
+            )
+            .join("\n");
+        } else if (typeof parts === "string") {
+          content = parts;
+        } else {
+          content = JSON.stringify(parts ?? "");
+        }
+        return { role: role as "user" | "assistant", content };
+      });
+  }
   return [];
 }
 

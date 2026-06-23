@@ -7,6 +7,10 @@
  *     to mock, inbound key ignored (×3)
  *   - Pillar-1: managed 200 response headers carry no authorization /
  *     x-bishop-upstream-key / operator-key leak; content-type forwarded (×1)
+ *   - W38-S970 NATIVE Gemini route (/v1beta/models/{model}:generateContent):
+ *     the daemon's native generateContent URL shape hits a REAL proxy route
+ *     (200, not the default 404) — byok fail-closed, managed forwards the
+ *     operator key as x-goog-api-key (native auth, not Bearer), no inbound leak.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -132,6 +136,7 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
         XAI_BASE_URL: mockUrl,
         QWEN_BASE_URL: mockUrl,
         GEMINI_BASE_URL: mockUrl,
+        GEMINI_NATIVE_BASE_URL: mockUrl,
         BISHOP_TEST_OUTBOUND_HOSTS: mock.address,
       },
       persist: false,
@@ -266,5 +271,94 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
     expect(res.headers.has("x-bishop-upstream-key")).toBe(false);
     expect(res.headers.has("operator-key")).toBe(false);
     expect(res.headers.get("content-type")).toBe("application/json");
+  }, 30000);
+
+  // ---- W38-S970: NATIVE Gemini generateContent route ----
+
+  const NATIVE_PATH = "/v1beta/models/gemini-2.5-flash:generateContent";
+  const NATIVE_BODY = JSON.stringify({
+    contents: [{ role: "user", parts: [{ text: "hi" }] }],
+  });
+
+  it("gemini-native: the daemon's native generateContent URL hits a REAL route (not the 404 default)", async () => {
+    // Anti-fixture-mask: the W9.7-class regression was that the daemon spoke
+    // native :generateContent while the proxy served only the OpenAI-compat path,
+    // so every native call fell through to the catch-all 404. Asserting 200 here
+    // (a managed call against a real upstream) proves the URL shapes MATCH.
+    const res = await worker.fetch(NATIVE_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${managedToken}`,
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { candidates?: unknown[]; error?: string };
+    expect(body.error).toBeUndefined();
+    expect(Array.isArray(body.candidates)).toBe(true);
+  }, 30000);
+
+  it("gemini-native: byok without X-Bishop-Upstream-Key → 400 byok_key_missing", async () => {
+    const res = await worker.fetch(NATIVE_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("byok_key_missing");
+  }, 30000);
+
+  it("gemini-native: managed forwards operator key as x-goog-api-key (native auth), inbound key ignored", async () => {
+    const res = await worker.fetch(NATIVE_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${managedToken}`,
+        "x-bishop-upstream-key": "should-be-ignored",
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(200);
+    // Native auth header — NOT Bearer; carries the operator key, never the inbound one.
+    const keyRes = await mock.fetch(mockUrl + "/__last_goog_key");
+    const { key } = (await keyRes.json()) as { key: string | null };
+    expect(key).toBe("op-gemini-zzz");
+    const authRes = await mock.fetch(mockUrl + "/__last_auth");
+    const { auth } = (await authRes.json()) as { auth: string | null };
+    expect(auth).toBeNull(); // native leg sends no Authorization upstream
+  }, 30000);
+
+  it("gemini-native: an unparseable model segment is not routed (no host injection)", async () => {
+    // A path that does not match the anchored {model}:generateContent shape must
+    // fall through — the model id can never carry a slash/host.
+    const res = await worker.fetch("/v1beta/models/evil%2F..%2Fhost:generateContent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${managedToken}`,
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(404); // unmatched → default handler, never an upstream call
+  }, 30000);
+
+  it("gemini-native: Pillar-1 — managed 200 response carries no auth/key leak", async () => {
+    const res = await worker.fetch(NATIVE_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${managedToken}`,
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.has("authorization")).toBe(false);
+    expect(res.headers.has("x-goog-api-key")).toBe(false);
+    expect(res.headers.has("x-bishop-upstream-key")).toBe(false);
   }, 30000);
 });

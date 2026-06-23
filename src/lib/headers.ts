@@ -97,3 +97,23 @@ export function rebuildByokHeaders(incoming: Headers, key: string): Headers {
   if (!out.has("content-type")) out.set("content-type", "application/json");
   return out;
 }
+
+/**
+ * Request header rebuild for the NATIVE Google Gemini upstream call
+ * (`…/v1beta/models/{model}:generateContent`).
+ *
+ * Unlike the OpenAI-compatible Gemini leg (Bearer via rebuildOpenAIHeaders), the
+ * native generateContent endpoint authenticates with the `x-goog-api-key` header.
+ * Only content-type is forwarded from the inbound request; every client
+ * identifier (inbound authorization, x-bishop-upstream-key, user-agent,
+ * x-forwarded-for, cookie) is dropped — Pillar 1 identifier-strip.
+ */
+export function rebuildGeminiNativeHeaders(incoming: Headers, key: string): Headers {
+  const out = new Headers();
+  for (const [k, v] of incoming.entries()) {
+    if (k.toLowerCase() === "content-type") out.set(k, v);
+  }
+  out.set("x-goog-api-key", key);
+  if (!out.has("content-type")) out.set("content-type", "application/json");
+  return out;
+}
