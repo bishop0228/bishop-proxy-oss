@@ -267,7 +267,9 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.siliconflow.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.siliconflow.cn");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.featherless.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(89);
+    // W38-S968 — Novita AI completion upstream (convenience tile, /byok/novita/ leg).
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.novita.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(90);
   });
 });
 

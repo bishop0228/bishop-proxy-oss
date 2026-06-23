@@ -1,7 +1,7 @@
 /**
  * Integration probes for the generalized BYOK leg (POST /byok/<seg>/...).
  *
- * Per-segment probes scale with the SEGMENTS table (20 segs after W38-S966):
+ * Per-segment probes scale with the SEGMENTS table (22 segs after W38-S968):
  *   byok fail-closed    ×N   (no X-Bishop-Upstream-Key → 400 byok_key_missing, one per seg)
  *   managed-forwarded   ×N   (bearer: mock sees Bearer op-<seg>-zzz)
  *   Pillar-1 no-leak    ×1   (response headers carry no credential)
@@ -63,6 +63,10 @@ const SEGMENTS: Segment[] = [
   { seg: "inference_net", keyVar: "INFERENCE_NET_API_KEY", opKey: "op-inference_net-zzz", path: "/byok/inference_net/v1/chat/completions"      },
   { seg: "siliconflow",  keyVar: "SILICONFLOW_API_KEY",  opKey: "op-siliconflow-zzz",  path: "/byok/siliconflow/v1/chat/completions"           },
   { seg: "featherless",  keyVar: "FEATHERLESS_API_KEY",  opKey: "op-featherless-zzz",  path: "/byok/featherless/v1/chat/completions"           },
+  // W38-S968 — Novita AI (OpenAI-compatible open-weights cloud, convenience tile).
+  // Exercises the new /byok/novita/ leg (fail-closed + operator-forward); the
+  // current canonical /openai/v1/ prefix (NOT the legacy /v3/openai/).
+  { seg: "novita",       keyVar: "NOVITA_API_KEY",       opKey: "op-novita-zzz",       path: "/byok/novita/openai/v1/chat/completions"         },
 ];
 
 function fromHex(hex: string): Uint8Array {

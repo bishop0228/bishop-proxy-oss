@@ -224,6 +224,15 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "api.siliconflow.com",    // SiliconFlow — international (default region)
   "api.siliconflow.cn",     // SiliconFlow — China region (data-residency: China-hosted)
   "api.featherless.ai",     // Featherless AI
+  // ── W38-S968 (founder-approved 2026-06-23): +1 BYOK completion upstream ──
+  // Novita AI (OpenAI-compatible open-weights-serving cloud; convenience tile,
+  // peer-tier to deepinfra/fireworks/together) — the /byok/novita/ leg
+  // (src/lib/byok-specs.ts) forwards to this single stable host. A model-inference
+  // upstream like the other provider hosts — NOT model-registry / MCP. Frozen
+  // exact-match, cert-pinned per the existing pattern; host/path live-verified vs
+  // novita.ai/docs 2026-06-23. +1 → length 89→90. Running total 90 = 41 provider
+  // + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
+  "api.novita.ai",          // Novita AI (/openai/v1/)
 ] as const);
 
 /**

@@ -160,8 +160,8 @@ describe("Dim 8 sealed-egress invariants (no-bypass)", () => {
     (globalThis as unknown as G).fetch = originalFetch;
   });
 
-  it("ALLOWED_OUTBOUND_HOSTS.length === 89 (sentinel — 40 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF; W38-S966 +7)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
+  it("ALLOWED_OUTBOUND_HOSTS.length === 90 (sentinel — 41 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF; W38-S968 +1 novita)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(90);
   });
 
   it("no-runtime-widening: installFetchAllowlist blocks non-allowlisted host after install", async () => {
@@ -255,11 +255,11 @@ describe("§C-V verification", () => {
     ).rejects.toBeInstanceOf(OutboundHostNotAllowed);
   });
 
-  // V2 — length sentinel: exactly 89 (40 provider + 44 MCP egress + 1 model-
+  // V2 — length sentinel: exactly 90 (41 provider + 44 MCP egress + 1 model-
   // registry + 3 S6b worker-egress fixed hosts + 1 HuggingFace BYO-model host;
-  // breaks loudly on silent host addition; W38-S966 +7 OpenAI-compat clouds)
-  it("V2 ALLOWED_OUTBOUND_HOSTS.length === 89 (length sentinel)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
+  // breaks loudly on silent host addition; W38-S968 +1 novita)
+  it("V2 ALLOWED_OUTBOUND_HOSTS.length === 90 (length sentinel)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(90);
   });
 
   // V3 — suffix-spoof teeth: both canonical suffix-spoof variants are rejected

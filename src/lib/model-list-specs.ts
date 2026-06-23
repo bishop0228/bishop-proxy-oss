@@ -121,6 +121,11 @@ export const MODEL_LIST_SPECS: Readonly<Record<string, ModelListSpec>> = Object.
   // dual-region selection applies to the completion leg, not the read-only list.
   siliconflow:   { upstreamHost: byokHost("siliconflow"), modelListPath: "/v1/models",           auth: "bearer", credentialSource: "forwarded" },
   featherless:   { upstreamHost: byokHost("featherless"), modelListPath: "/v1/models",           auth: "bearer", credentialSource: "forwarded" },
+  // W38-S968 — Novita AI exposes an OpenAI-compatible Models API under the same
+  // /openai/v1/ prefix as its completion leg (host single-sourced from the byok
+  // novita leg → api.novita.ai; zero new egress). MIRRORS the daemon
+  // PROVIDER_MODEL_LIST_ENDPOINTS["novita"] entry (no cross-table drift).
+  novita:        { upstreamHost: byokHost("novita"),      modelListPath: "/openai/v1/models",    auth: "bearer", credentialSource: "forwarded" },
   // qwen_alibaba: dashscope is NOT a /byok/ leg (its OAuth path is qwen.ts); the
   // host dashscope-intl.aliyuncs.com is already allowlisted for the qwen completion.
   qwen_alibaba:  { upstreamHost: "dashscope-intl.aliyuncs.com", modelListPath: "/compatible-mode/v1/models", auth: "bearer", credentialSource: "forwarded" },

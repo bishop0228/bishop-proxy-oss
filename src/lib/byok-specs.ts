@@ -241,6 +241,17 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     operatorKeyVar: "FEATHERLESS_API_KEY",
     baseUrlVar: "FEATHERLESS_BASE_URL",
   },
+
+  // ── W38-S968 (founder-approved 2026-06-23): Novita AI convenience tile ──
+  // Peer-tier to deepinfra/fireworks/together; the one genuinely-distinct provider
+  // from the OpenClaw breadth diff. SINGLE stable host api.novita.ai (added to
+  // ALLOWED_OUTBOUND_HOSTS). OpenAI-compat under the /openai/v1/ prefix (carried by
+  // the daemon completion_route /byok/novita/openai/v1/...). Bare owner/model ids.
+  novita: {
+    upstreamHost: "api.novita.ai",
+    operatorKeyVar: "NOVITA_API_KEY",
+    baseUrlVar: "NOVITA_BASE_URL",
+  },
 });
 
 /**
