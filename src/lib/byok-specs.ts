@@ -24,6 +24,14 @@ export interface ByokUpstreamSpec {
   // when the CF_AIG_* env is unset (no regression). gateway.ai.cloudflare.com is
   // already in ALLOWED_OUTBOUND_HOSTS (§H-DYNAMIC), so this widens nothing.
   aiGatewayProvider?: string;
+  // W38-S966 — multi-region leg (e.g. SiliconFlow .com/.cn). When set, the active
+  // upstream host is selected from THIS frozen map by a constrained region token
+  // (X-Bishop-Upstream-Region, validated against these keys); an unknown/absent
+  // region falls back to `upstreamHost` (the primary). EVERY value here is in
+  // ALLOWED_OUTBOUND_HOSTS, so selection NEVER yields a non-enumerated host — the
+  // host stays spec-derived, never request-derived (the inbound token only chooses
+  // WHICH frozen-allowlisted host, it cannot inject one). See resolveByokUpstreamHost.
+  regionHosts?: Readonly<Record<string, string>>;
 }
 
 export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = Object.freeze({
@@ -174,4 +182,87 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
     operatorKeyVar: "SAKANA_API_KEY",
     baseUrlVar: "SAKANA_BASE_URL",
   },
+
+  // ── W38-S966 — 6 OpenAI-compatible open-weights-serving clouds (founder-approved
+  // 2026-06-23). Hosts/paths live-verified vs vendor docs 2026-06-23; all added to
+  // ALLOWED_OUTBOUND_HOSTS. The daemon /byok/<seg>/... route maps here; host is
+  // spec-derived, never request-controlled (SiliconFlow's region token only selects
+  // among its OWN enumerated regionHosts). ──
+
+  // meta_llama — Meta Llama API (PREVIEW). OpenAI-compat ONLY via the daemon's
+  // /compat/v1/ path (the bare /v1/ is Meta's own shape; the daemon never routes it).
+  meta_llama: {
+    upstreamHost: "api.llama.com",
+    operatorKeyVar: "META_LLAMA_API_KEY",
+    baseUrlVar: "META_LLAMA_BASE_URL",
+  },
+
+  // deepinfra — DeepInfra. OpenAI-compat under /v1/openai/ (path carried by the
+  // daemon completion_route /byok/deepinfra/v1/openai/...).
+  deepinfra: {
+    upstreamHost: "api.deepinfra.com",
+    operatorKeyVar: "DEEPINFRA_API_KEY",
+    baseUrlVar: "DEEPINFRA_BASE_URL",
+  },
+
+  // baseten — Baseten Model APIs. PINNED to the unified inference.baseten.co host;
+  // per-model model-<id>.api.baseten.co + white-label workspace domains are NOT on
+  // the frozen path (only this unified host is allowlisted/supported).
+  baseten: {
+    upstreamHost: "inference.baseten.co",
+    operatorKeyVar: "BASETEN_API_KEY",
+    baseUrlVar: "BASETEN_BASE_URL",
+  },
+
+  // inference_net — inference.net. The "Catalyst" gateway headers (x-inference-
+  // provider*) forward to 3rd-party backends through THIS same host and are NEVER
+  // enabled (rebuildByokHeaders strips all client identifiers, so they cannot be
+  // forwarded). No freshness leg (its /v1/models was unconfirmed → curated-only).
+  inference_net: {
+    upstreamHost: "api.inference.net",
+    operatorKeyVar: "INFERENCE_NET_API_KEY",
+    baseUrlVar: "INFERENCE_NET_BASE_URL",
+  },
+
+  // siliconflow — DUAL-REGION. Keys are region-bound (a .com key won't auth .cn)
+  // and the host is NOT key-inferable, so the region is selected per-connection by
+  // the X-Bishop-Upstream-Region token (validated against regionHosts; default = the
+  // .com international host). BOTH hosts are in ALLOWED_OUTBOUND_HOSTS. // SECURITY-REVIEW: [SR] .cn region is China-hosted; data-residency policy applies.
+  siliconflow: {
+    upstreamHost: "api.siliconflow.com",
+    operatorKeyVar: "SILICONFLOW_API_KEY",
+    baseUrlVar: "SILICONFLOW_BASE_URL",
+    regionHosts: { com: "api.siliconflow.com", cn: "api.siliconflow.cn" },
+  },
+
+  // featherless — Featherless AI. Clean OpenAI-compat /v1/. HF-style ids.
+  featherless: {
+    upstreamHost: "api.featherless.ai",
+    operatorKeyVar: "FEATHERLESS_API_KEY",
+    baseUrlVar: "FEATHERLESS_BASE_URL",
+  },
 });
+
+/**
+ * Resolve the upstream host for a /byok/ leg (W38-S966).
+ *
+ * Single-region spec → always `spec.upstreamHost`. Multi-region spec
+ * (`regionHosts` set, e.g. SiliconFlow .com/.cn) → the host selected from the
+ * FROZEN `regionHosts` map by the constrained `region` token, validated against
+ * the map's keys; an unknown/absent token falls back to `spec.upstreamHost` (the
+ * primary). The return is ALWAYS one of the spec's enumerated hosts (every one of
+ * which is in ALLOWED_OUTBOUND_HOSTS) — the inbound token chooses WHICH frozen
+ * host, it can NEVER inject a new one. Keeps the "host is spec-derived, never
+ * request-derived" SSRF invariant intact for the multi-region case.
+ */
+export function resolveByokUpstreamHost(
+  spec: ByokUpstreamSpec,
+  region: string | null | undefined,
+): string {
+  if (!spec.regionHosts) return spec.upstreamHost;
+  const r = (region ?? "").trim().toLowerCase();
+  if (r && Object.prototype.hasOwnProperty.call(spec.regionHosts, r)) {
+    return spec.regionHosts[r];
+  }
+  return spec.upstreamHost;
+}

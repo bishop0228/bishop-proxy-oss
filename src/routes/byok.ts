@@ -21,7 +21,7 @@ import type { Env } from "../index";
 import { envVar } from "../lib/env-var";
 import { resolveUpstreamKey, rebuildByokHeaders } from "../lib/headers";
 import { classify } from "../lib/classifier";
-import { BYOK_UPSTREAM_SPECS } from "../lib/byok-specs";
+import { BYOK_UPSTREAM_SPECS, resolveByokUpstreamHost } from "../lib/byok-specs";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -167,7 +167,14 @@ export async function handleByok(
     // provider key, which rebuildByokHeaders already placed in the provider auth header.
     upstreamHeaders.set("cf-aig-authorization", `Bearer ${env.CF_AIG_TOKEN}`);
   } else {
-    baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${spec.upstreamHost}`;
+    // W38-S966 — multi-region legs (SiliconFlow .com/.cn) select the upstream host
+    // from the spec's FROZEN regionHosts by the constrained X-Bishop-Upstream-Region
+    // token; single-region legs always resolve to spec.upstreamHost. The result is
+    // ALWAYS one of the spec's enumerated (allowlisted) hosts — never request-derived.
+    const resolvedHost = resolveByokUpstreamHost(
+      spec, request.headers.get("x-bishop-upstream-region"),
+    );
+    baseUrl = envVar(env, spec.baseUrlVar) ?? `https://${resolvedHost}`;
   }
   const upstream = await fetchWithRetry(`${baseUrl}${upstreamPath}`, {
     method: "POST",

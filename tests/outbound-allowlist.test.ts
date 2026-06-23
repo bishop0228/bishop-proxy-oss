@@ -259,7 +259,15 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("huggingface.co");
     // W38-S964 — Sakana Fugu completion upstream (cloud-only, /byok/sakana/ leg).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.sakana.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(82);
+    // W38-S966 — 6 OpenAI-compatible open-weights-serving clouds (+7 hosts; SiliconFlow dual-region).
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.llama.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.deepinfra.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("inference.baseten.co");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.inference.net");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.siliconflow.com");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.siliconflow.cn");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.featherless.ai");
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(89);
   });
 });
 

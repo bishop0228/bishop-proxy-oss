@@ -1,19 +1,20 @@
 /**
  * Integration probes for the generalized BYOK leg (POST /byok/<seg>/...).
  *
- * 31 probes total:
- *   byok fail-closed    ×14  (no X-Bishop-Upstream-Key → 400 byok_key_missing, one per seg)
- *   managed-forwarded   ×14  (bearer ×14: mock sees Bearer op-<seg>-zzz)
+ * Per-segment probes scale with the SEGMENTS table (20 segs after W38-S966):
+ *   byok fail-closed    ×N   (no X-Bishop-Upstream-Key → 400 byok_key_missing, one per seg)
+ *   managed-forwarded   ×N   (bearer: mock sees Bearer op-<seg>-zzz)
  *   Pillar-1 no-leak    ×1   (response headers carry no credential)
  *   unknown-provider    ×1   (POST /byok/unknown-xyz/... → 404 unknown_provider)
- *   allowlist-coverage  ×1   (all 14 BYOK upstreamHost values in ALLOWED_OUTBOUND_HOSTS)
+ *   allowlist-coverage  ×1   (every BYOK upstreamHost + regionHosts value in ALLOWED_OUTBOUND_HOSTS)
+ *   region-selection    ×3   (W38-S966 resolveByokUpstreamHost: single/dual/fallback)
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
 import { ALLOWED_OUTBOUND_HOSTS } from "../src/lib/outbound-allowlist";
-import { BYOK_UPSTREAM_SPECS } from "../src/lib/byok-specs";
+import { BYOK_UPSTREAM_SPECS, resolveByokUpstreamHost } from "../src/lib/byok-specs";
 import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 
 const PROXY_VARS_BASE = {
@@ -52,6 +53,16 @@ const SEGMENTS: Segment[] = [
   // W38-S964 — Sakana Fugu (cloud-only, OpenAI-compatible). Exercises the new
   // /byok/sakana/ leg: fail-closed without an upstream key + operator-key forward.
   { seg: "sakana",      keyVar: "SAKANA_API_KEY",      opKey: "op-sakana-zzz",      path: "/byok/sakana/v1/chat/completions"                    },
+  // W38-S966 — 6 OpenAI-compatible open-weights-serving clouds. Each exercises its
+  // new /byok/<seg>/ leg (fail-closed + operator-forward). Meta uses /compat/v1/;
+  // DeepInfra /v1/openai/. The SiliconFlow per-connection region selection is unit-
+  // tested separately (the base-URL test-override masks it in the live harness).
+  { seg: "meta_llama",   keyVar: "META_LLAMA_API_KEY",   opKey: "op-meta_llama-zzz",   path: "/byok/meta_llama/compat/v1/chat/completions"     },
+  { seg: "deepinfra",    keyVar: "DEEPINFRA_API_KEY",    opKey: "op-deepinfra-zzz",    path: "/byok/deepinfra/v1/openai/chat/completions"      },
+  { seg: "baseten",      keyVar: "BASETEN_API_KEY",      opKey: "op-baseten-zzz",      path: "/byok/baseten/v1/chat/completions"               },
+  { seg: "inference_net", keyVar: "INFERENCE_NET_API_KEY", opKey: "op-inference_net-zzz", path: "/byok/inference_net/v1/chat/completions"      },
+  { seg: "siliconflow",  keyVar: "SILICONFLOW_API_KEY",  opKey: "op-siliconflow-zzz",  path: "/byok/siliconflow/v1/chat/completions"           },
+  { seg: "featherless",  keyVar: "FEATHERLESS_API_KEY",  opKey: "op-featherless-zzz",  path: "/byok/featherless/v1/chat/completions"           },
 ];
 
 function fromHex(hex: string): Uint8Array {
@@ -268,6 +279,45 @@ describe("BYOK legs (/byok/<seg>/...)", () => {
       expect(allowedSet.has(spec.upstreamHost),
         `seg=${seg} upstreamHost=${spec.upstreamHost} not in ALLOWED_OUTBOUND_HOSTS`
       ).toBe(true);
+      // W38-S966 — every enumerated region host (SiliconFlow .com/.cn) must ALSO be
+      // allowlisted, so the per-connection selector can never pick an off-allowlist host.
+      for (const [region, host] of Object.entries(spec.regionHosts ?? {})) {
+        expect(allowedSet.has(host),
+          `seg=${seg} region=${region} host=${host} not in ALLOWED_OUTBOUND_HOSTS`
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+// ── W38-S966 — SiliconFlow dual-region host selection (resolveByokUpstreamHost) ──
+// The live worker harness overrides the base URL (SILICONFLOW_BASE_URL → mock), so
+// the region→host mapping is exercised directly against the pure resolver.
+describe("resolveByokUpstreamHost (W38-S966 multi-region)", () => {
+  const single = BYOK_UPSTREAM_SPECS.featherless;       // no regionHosts
+  const dual = BYOK_UPSTREAM_SPECS.siliconflow;          // regionHosts {com,cn}
+
+  it("single-region leg ignores the region token", () => {
+    for (const r of [null, "", "cn", "anything", "evil.example.com"]) {
+      expect(resolveByokUpstreamHost(single, r)).toBe(single.upstreamHost);
+    }
+  });
+
+  it("dual-region leg selects the enumerated host by the constrained token", () => {
+    expect(resolveByokUpstreamHost(dual, "com")).toBe("api.siliconflow.com");
+    expect(resolveByokUpstreamHost(dual, "cn")).toBe("api.siliconflow.cn");
+    // case-insensitive + whitespace-tolerant
+    expect(resolveByokUpstreamHost(dual, "  CN ")).toBe("api.siliconflow.cn");
+  });
+
+  it("an unknown/absent region falls back to the primary (.com), never an injected host", () => {
+    for (const bad of [null, undefined, "", "ap", "us-west", "api.evil.cn", "../x"]) {
+      expect(resolveByokUpstreamHost(dual, bad)).toBe(dual.upstreamHost);
+    }
+    // the resolved host is ALWAYS one of the spec's enumerated (allowlisted) hosts
+    const enumerated = new Set(Object.values(dual.regionHosts ?? {}));
+    for (const probe of ["com", "cn", "garbage", null]) {
+      expect(enumerated.has(resolveByokUpstreamHost(dual, probe))).toBe(true);
     }
   });
 });

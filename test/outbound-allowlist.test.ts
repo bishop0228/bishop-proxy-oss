@@ -82,8 +82,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
 
   // ── Guard 8c ─────────────────────────────────────────────────────────────
 
-  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 82 — 33 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF (W38-S964 +1 Sakana)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(82);
+  it("8c: ALLOWED_OUTBOUND_HOSTS.length === 89 — 40 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF (W38-S966 +7)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
   });
 
   it("8d: oauth2.googleapis.com is in ALLOWED_OUTBOUND_HOSTS (§1.17.19 exact-match add)", () => {
@@ -103,8 +103,8 @@ describe("outbound-allowlist: §1.17.18 enterprise-host floor guards", () => {
     expect(isAnchoredEnterpriseHost("oauth2.googleapis.com")).toBe(false);
   });
 
-  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 82 — 33 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF (exact-match; W38-S964 +1 Sakana)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(82);
+  it("9c: ALLOWED_OUTBOUND_HOSTS.length === 89 — 40 provider + 44 MCP + 1 model-registry + 3 S6b worker-egress + 1 HF (exact-match; W38-S966 +7)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
   });
 });
 
@@ -136,9 +136,9 @@ describe("outbound-allowlist: W38-S868 §9.3.8c HuggingFace BYO-model guards", (
     expect(isAnchoredEnterpriseHost("api.huggingface.co")).toBe(false);
   });
 
-  it("12d: the HF CDN host is NOT an exact-allowlist entry (length stays 82 = pattern-only)", () => {
+  it("12d: the HF CDN host is NOT an exact-allowlist entry (length stays 89 = pattern-only)", () => {
     expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("cdn-lfs-us-1.hf.co")).toBe(false);
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(82);
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
   });
 });
 
@@ -221,8 +221,8 @@ describe("outbound-allowlist: W38-S735 per-account MCP host pattern guards", () 
     });
   }
 
-  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 82 = exact-match only)", () => {
-    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(82);
+  it("11c: the per-account hosts are NOT added to ALLOWED_OUTBOUND_HOSTS (length 89 = exact-match only)", () => {
+    expect(ALLOWED_OUTBOUND_HOSTS.length).toBe(89);
     for (const host of ENTERPRISE_OK) {
       expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes(host)).toBe(false);
     }

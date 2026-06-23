@@ -208,6 +208,22 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // provider hosts. Frozen exact-match host (length 81→82). Running total 82 = 33
   // provider + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
   "api.sakana.ai",
+  // ── W38-S966 (founder-approved 2026-06-23): +7 BYOK completion upstreams ──
+  // 6 OpenAI-compatible open-weights-serving clouds. Each is a /byok/<seg>/ leg
+  // (src/lib/byok-specs.ts), a model-inference upstream like the other provider
+  // hosts — NOT model-registry / MCP. Frozen exact-match, cert-pinned per the
+  // existing pattern; hosts/paths live-verified vs vendor docs 2026-06-23.
+  // SiliconFlow is DUAL-REGION (2 hosts: .com international + .cn China), region
+  // selected per-connection by X-Bishop-Upstream-Region (see byok-specs
+  // resolveByokUpstreamHost). +7 → length 82→89. Running total 89 = 40 provider
+  // + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
+  "api.llama.com",          // Meta Llama API (/compat/v1/ OpenAI-compat only)
+  "api.deepinfra.com",      // DeepInfra (/v1/openai/)
+  "inference.baseten.co",   // Baseten Model APIs (unified host; NOT per-model/white-label)
+  "api.inference.net",      // inference.net (Catalyst gateway headers never enabled)
+  "api.siliconflow.com",    // SiliconFlow — international (default region)
+  "api.siliconflow.cn",     // SiliconFlow — China region (data-residency: China-hosted)
+  "api.featherless.ai",     // Featherless AI
 ] as const);
 
 /**
