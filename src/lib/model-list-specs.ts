@@ -16,14 +16,20 @@
  * every host here is ALREADY in ALLOWED_OUTBOUND_HOSTS — this leg adds ZERO egress
  * hosts (it reuses the completion legs' hosts for a read-only GET).
  *
- * credentialSource — where the upstream credential comes from:
- *   "operator"  — managed providers (openai/claude/gemini): the operator key from
- *                 env[operatorKeyVar]. The user's own key is NEVER spent on a
- *                 managed model-list. Fail-closed managed_key_unavailable if unset.
- *   "forwarded" — BYOK/subscription: the user's own key, forwarded by the daemon in
- *                 `X-Bishop-Upstream-Key`. Fail-closed byok_key_missing if absent
- *                 (→ the daemon degrades THAT provider to its bundled catalog, which
- *                 is the honest `[bundled]` surface rather than a masqueraded fresh).
+ * credentialSource — where the upstream credential comes from. Bishop's managed
+ * (operator) key is ANTHROPIC-ONLY (the FREE tier); openai/gemini have NO managed
+ * key — they are ALWAYS the user's own (BYOK/subscription). So:
+ *   "forwarded" — BYOK/subscription INCL. openai/gemini: the user's own key,
+ *                 forwarded by the daemon in `X-Bishop-Upstream-Key`. Fail-closed
+ *                 byok_key_missing if absent (→ the daemon degrades THAT provider to
+ *                 its bundled catalog — the honest `[bundled]` surface, not a fake).
+ *   "operator_or_forwarded" — claude ONLY: FREE tier → the managed Anthropic
+ *                 operator key (env[operatorKeyVar]); CONNECTED BYOK-Anthropic → the
+ *                 user's forwarded key, PREFERRED when present so a connected device
+ *                 never touches the managed key. Fail-closed if neither is present.
+ *   "operator"  — operator key only (env[operatorKeyVar]); fail-closed
+ *                 managed_key_unavailable if unset. (No provider uses this after the
+ *                 Anthropic-only correction — claude is operator_or_forwarded.)
  *
  * auth — how the resolved key is presented upstream:
  *   "bearer"    — Authorization: Bearer <key>   (OpenAI-compatible; the majority)
@@ -41,7 +47,7 @@
 import { BYOK_UPSTREAM_SPECS } from "./byok-specs";
 
 export type ModelListAuth = "bearer" | "anthropic" | "query";
-export type ModelListCredentialSource = "operator" | "forwarded";
+export type ModelListCredentialSource = "operator" | "forwarded" | "operator_or_forwarded";
 
 export interface ModelListSpec {
   upstreamHost: string;
@@ -65,19 +71,21 @@ function byokHost(seg: string): string {
 }
 
 export const MODEL_LIST_SPECS: Readonly<Record<string, ModelListSpec>> = Object.freeze({
-  // ── Managed (operator key; the user's key is never spent on the managed list) ──
+  // ── Managed key is ANTHROPIC-ONLY (FREE tier). claude → operator_or_forwarded
+  //    (FREE = managed Anthropic operator key; CONNECTED BYOK-Anthropic = the user's
+  //    forwarded key). openai/gemini have NO managed key — ALWAYS the user's own
+  //    (BYOK/subscription), so they forward like any other provider. ──
   openai: {
     upstreamHost: "api.openai.com",
     modelListPath: "/v1/models",
     auth: "bearer",
-    credentialSource: "operator",
-    operatorKeyVar: "OPENAI_API_KEY",
+    credentialSource: "forwarded",
   },
   claude: {
     upstreamHost: "api.anthropic.com",
     modelListPath: "/v1/models",
     auth: "anthropic",
-    credentialSource: "operator",
+    credentialSource: "operator_or_forwarded",
     operatorKeyVar: "ANTHROPIC_API_KEY",
     anthropicVersion: "2023-06-01",
   },
@@ -85,8 +93,7 @@ export const MODEL_LIST_SPECS: Readonly<Record<string, ModelListSpec>> = Object.
     upstreamHost: "generativelanguage.googleapis.com",
     modelListPath: "/v1beta/models",
     auth: "query",
-    credentialSource: "operator",
-    operatorKeyVar: "GEMINI_API_KEY",
+    credentialSource: "forwarded",
   },
 
   // ── BYOK / subscription (forwarded user key in X-Bishop-Upstream-Key) ──

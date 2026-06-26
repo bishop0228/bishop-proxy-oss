@@ -11,13 +11,15 @@
  *   (1) ★ BYOK forward — deepseek/groq/mistral GET forwards to EXACTLY the frozen
  *       upstream host + model-list path with the FORWARDED user key as Bearer; the
  *       streamed id list is returned. Host + path are spec-derived, never request.
- *   (2) ★ managed — openai (Bearer) / claude (x-api-key+version) / gemini (?key=)
- *       use the OPERATOR key; the user's key is never read. gemini key rides the URL.
+ *   (2) ★ creds — the managed key is ANTHROPIC-ONLY: openai (Bearer) + gemini (?key=)
+ *       FORWARD the user's key (they have no managed key); claude (x-api-key+version)
+ *       uses the operator key when FREE, the user's forwarded key when CONNECTED.
  *   (3) ★ unknown provider → 404 unknown_provider; fetch NOT called (→ bundled).
  *   (4) ★ auth — no Bearer → 401 missing_bearer; bad token → 401 token_not_found;
  *       fetch NOT called.
  *   (5) ★ byok_key_missing — forwarded provider w/o X-Bishop-Upstream-Key → 400,
- *       no forward; managed_key_unavailable — managed provider w/o operator key → 400.
+ *       no forward; managed_key_unavailable — operator_or_forwarded claude w/o EITHER
+ *       an operator key OR a forwarded key → 400.
  *   (6) ★ REDIRECT-BLOCKED — a 3xx to an off-allowlist host → 502, NO re-fetch.
  *   (7) ★ Pillar-1 audit — no logEvent line contains the forwarded/operator key;
  *       every line is a valid ProxyLogEvent.
@@ -220,19 +222,19 @@ describe("W38-S935 model-list leg (GET + X-Bishop-Provider)", () => {
     }
   });
 
-  // ── Probe 2: ★ managed providers use the operator key in the right auth shape ──
-  it("★ managed: openai=Bearer, claude=x-api-key+version, gemini=?key= — operator key, user key never read", async () => {
-    // openai → Bearer operator key
+  // ── Probe 2: ★ credential shapes — the managed key is ANTHROPIC-ONLY ─────────
+  it("★ creds: openai/gemini FORWARD the user key (no managed key); claude=operator (FREE) or forwarded (CONNECTED BYOK-Anthropic)", async () => {
+    // openai → forwarded user key as Bearer (openai has NO managed/operator key).
     installFetch(() => openAiListBody("gpt-x"));
-    let resp = await handleModelList(mlReq("openai", { upstreamKey: null }), makeEnv(), makeCtx());
+    let resp = await handleModelList(mlReq("openai"), makeEnv(), makeCtx());
     expect(resp.status).toBe(200);
     let u = new URL(captures[0].url);
     expect(u.hostname).toBe("api.openai.com");
     expect(u.pathname).toBe("/v1/models");
-    expect(captures[0].headers.get("authorization")).toBe(`Bearer ${OPERATOR_KEY}`);
+    expect(captures[0].headers.get("authorization")).toBe(`Bearer ${BYOK_KEY}`);
     vi.unstubAllGlobals();
 
-    // claude → x-api-key + anthropic-version, NOT Bearer
+    // claude FREE (NO forwarded key) → managed Anthropic operator key, x-api-key.
     captures = [];
     installFetch(() => openAiListBody("claude-x"));
     resp = await handleModelList(mlReq("claude", { upstreamKey: null }), makeEnv(), makeCtx());
@@ -244,7 +246,17 @@ describe("W38-S935 model-list leg (GET + X-Bishop-Provider)", () => {
     expect(captures[0].headers.get("authorization")).toBeNull();
     vi.unstubAllGlobals();
 
-    // gemini → ?key= in the URL (native /v1beta/models), no auth header
+    // claude CONNECTED (BYOK-Anthropic — forwarded key present) → the USER key is
+    // PREFERRED; the managed operator key is NEVER touched on a connected device.
+    captures = [];
+    installFetch(() => openAiListBody("claude-x"));
+    resp = await handleModelList(mlReq("claude"), makeEnv(), makeCtx());
+    expect(resp.status).toBe(200);
+    expect(captures[0].headers.get("x-api-key")).toBe(BYOK_KEY);
+    expect(captures[0].headers.get("x-api-key")).not.toBe(OPERATOR_KEY);
+    vi.unstubAllGlobals();
+
+    // gemini → forwarded user key in ?key= (native /v1beta/models), no auth header.
     captures = [];
     installFetch(
       () =>
@@ -253,12 +265,12 @@ describe("W38-S935 model-list leg (GET + X-Bishop-Provider)", () => {
           headers: { "content-type": "application/json" },
         }),
     );
-    resp = await handleModelList(mlReq("gemini", { upstreamKey: null }), makeEnv(), makeCtx());
+    resp = await handleModelList(mlReq("gemini"), makeEnv(), makeCtx());
     expect(resp.status).toBe(200);
     u = new URL(captures[0].url);
     expect(u.hostname).toBe("generativelanguage.googleapis.com");
     expect(u.pathname).toBe("/v1beta/models");
-    expect(u.searchParams.get("key")).toBe(OPERATOR_KEY);
+    expect(u.searchParams.get("key")).toBe(BYOK_KEY);
     expect(captures[0].headers.get("authorization")).toBeNull();
     expect(captures[0].headers.get("x-api-key")).toBeNull();
   });
@@ -301,9 +313,14 @@ describe("W38-S935 model-list leg (GET + X-Bishop-Provider)", () => {
     expect(noByokKey.status).toBe(400);
     expect(((await noByokKey.json()) as { error: string }).error).toBe("byok_key_missing");
 
+    // operator_or_forwarded (claude) with NEITHER an operator key NOR a forwarded
+    // key → managed_key_unavailable (FREE-tier claude needs the managed Anthropic
+    // key). makeEnv seeds ANTHROPIC_API_KEY in the base, so clear it explicitly.
+    const envNoAnthropic = makeEnv({ operatorKeys: false }) as unknown as Record<string, unknown>;
+    delete envNoAnthropic.ANTHROPIC_API_KEY;
     const noOpKey = await handleModelList(
-      mlReq("openai", { upstreamKey: null }),
-      makeEnv({ operatorKeys: false }),
+      mlReq("claude", { upstreamKey: null }),
+      envNoAnthropic as unknown as Env,
       makeCtx(),
     );
     expect(noOpKey.status).toBe(400);

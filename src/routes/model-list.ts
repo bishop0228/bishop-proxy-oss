@@ -185,25 +185,35 @@ export async function handleModelList(
     );
   }
 
-  // Step 5 — credential resolve (fail-closed; NO forward on failure).
+  // Step 5 — credential resolve (fail-closed; NO forward on failure). Bishop's
+  // managed (operator) key is ANTHROPIC-ONLY: "forwarded" providers (incl.
+  // openai/gemini, which have no managed key) ALWAYS use the user's forwarded key;
+  // claude is "operator_or_forwarded" — FREE tier uses the managed Anthropic
+  // operator key, but a CONNECTED BYOK-Anthropic device's forwarded key is PREFERRED
+  // so a connected device never touches the managed key.
+  const fwd = (request.headers.get("x-bishop-upstream-key") ?? "").trim();
   let upstreamKey: string;
-  if (spec.credentialSource === "operator") {
-    // Managed: the operator key. The user's key is NEVER spent here.
+  if (spec.credentialSource === "forwarded") {
+    // BYOK/subscription: the user's own key. Absent → fail closed (→ the daemon
+    // degrades that provider to its bundled catalog).
+    if (!fwd) {
+      emitError(requestId, ip, requestSize, 400, "byok_key_missing", startedAt, tokenId);
+      return jsonError(400, "byok_key_missing");
+    }
+    upstreamKey = fwd;
+  } else if (spec.credentialSource === "operator_or_forwarded" && fwd) {
+    // CONNECTED (e.g. BYOK-Anthropic claude): prefer the user's forwarded key —
+    // never spend the managed key for a connected device.
+    upstreamKey = fwd;
+  } else {
+    // Managed: the operator key (FREE-tier claude, or any "operator" spec). The
+    // user's key is NEVER spent here.
     const op = (envVar(env, spec.operatorKeyVar ?? "") ?? "").trim();
     if (!op) {
       emitError(requestId, ip, requestSize, 400, "managed_key_unavailable", startedAt, tokenId);
       return jsonError(400, "managed_key_unavailable");
     }
     upstreamKey = op;
-  } else {
-    // BYOK/subscription: the user's own key, forwarded by the daemon. Absent →
-    // fail closed (→ the daemon degrades that provider to its bundled catalog).
-    const fwd = (request.headers.get("x-bishop-upstream-key") ?? "").trim();
-    if (!fwd) {
-      emitError(requestId, ip, requestSize, 400, "byok_key_missing", startedAt, tokenId);
-      return jsonError(400, "byok_key_missing");
-    }
-    upstreamKey = fwd;
   }
 
   // Step 6 — forward the upstream GET. Host + path derived from the frozen spec.
