@@ -269,7 +269,7 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.featherless.ai");
     // W38-S968 — Novita AI completion upstream (convenience tile, /byok/novita/ leg).
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.novita.ai");
-    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(90);
+    expect(ALLOWED_OUTBOUND_HOSTS).toHaveLength(91);
   });
 });
 

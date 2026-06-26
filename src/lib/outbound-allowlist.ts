@@ -94,6 +94,8 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "api.githubcopilot.com",
   "chat.qwen.ai",
   "portal.nousresearch.com",
+  // Synthetic open-weights aggregator (API-key; real integration 2026-06)
+  "api.synthetic.new",
   // api.x.ai + dashscope-intl.aliyuncs.com already present above; api.github.com OMITTED (secondary Copilot token mint is daemon-side)
   // §1.17.17 enterprise BYOK — AWS Bedrock SigV4
   "bedrock-runtime.us-east-1.amazonaws.com",
@@ -230,7 +232,7 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // (src/lib/byok-specs.ts) forwards to this single stable host. A model-inference
   // upstream like the other provider hosts — NOT model-registry / MCP. Frozen
   // exact-match, cert-pinned per the existing pattern; host/path live-verified vs
-  // novita.ai/docs 2026-06-23. +1 → length 89→90. Running total 90 = 41 provider
+  // novita.ai/docs 2026-06-23. +1 → length 90→91. Running total 91 = 42 provider
   // + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
   "api.novita.ai",          // Novita AI (/openai/v1/)
 ] as const);

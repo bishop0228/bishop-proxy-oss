@@ -8,7 +8,8 @@
  * §3.2 single-seal boundary; client cannot pick the upstream path.
  *
  * Keyed by URL segment appearing at position [2] of /oauth/<seg>/token (token leg)
- * and /v1/<seg>/... (completion leg). Five segs: ToS-permitted subscription sign-ins only.
+ * and /v1/<seg>/... (completion leg). Six segs: five ToS-permitted subscription
+ * sign-ins + the Synthetic API-key aggregator (completion-leg only; token leg unused).
  * Anthropic + Google Gemini are intentionally absent (subscription OAuth banned Feb–Apr 2026).
  *
  * Do NOT add an entry without a corresponding host addition in src/lib/outbound-allowlist.ts.
@@ -100,5 +101,19 @@ export const OAUTH_UPSTREAM_SPECS: Readonly<Record<string, OAuthUpstreamSpec>> =
     completionHost: "portal.nousresearch.com",
     completionPath: "/v1/chat/completions",
     completionBaseUrlVar: "NOUS_PORTAL_COMPLETION_BASE_URL",
+  },
+
+  // synthetic — Synthetic open-weights aggregator. API-KEY (not OAuth): enrollment
+  // is daemon-local (/apikey/synthetic/register), so the token leg is UNUSED; the
+  // user's API key is forwarded as X-Bishop-Upstream-Key → Bearer on the completion
+  // leg. OpenAI-compatible (api.synthetic.new/v1/chat/completions); completionPath
+  // FIXED (§3.2 single-seal — the proxy never derives it from the inbound request).
+  synthetic: {
+    tokenHost: "api.synthetic.new",
+    tokenPath: "/v1/chat/completions",
+    tokenBaseUrlVar: "SYNTHETIC_TOKEN_BASE_URL",
+    completionHost: "api.synthetic.new",
+    completionPath: "/v1/chat/completions",
+    completionBaseUrlVar: "SYNTHETIC_COMPLETION_BASE_URL",
   },
 });
