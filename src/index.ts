@@ -29,6 +29,7 @@ import { handleQwen } from "./routes/qwen";
 import { handleGemini } from "./routes/gemini";
 import { handleGeminiNative } from "./routes/gemini-native";
 import { handleGeminiFiles } from "./routes/gemini-files";
+import { handleProviderFiles } from "./routes/provider-files";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -65,6 +66,8 @@ export interface Env {
   GEMINI_NATIVE_BASE_URL?: string;
   GEMINI_UPLOAD_URL?: string; // point/ship Files-API media upload (host frozen; override for tests)
   GEMINI_FILES_BASE_URL?: string; // point/ship Files-API delete base (host frozen)
+  OPENAI_FILES_URL?: string; // point/ship OpenAI Files upload/delete base (host frozen)
+  ANTHROPIC_FILES_URL?: string; // point/ship Anthropic Files upload/delete base (host frozen)
   MISTRAL_API_KEY?: string;
   MISTRAL_BASE_URL?: string;
   DEEPSEEK_API_KEY?: string;
@@ -251,6 +254,17 @@ export default {
       /^\/v1beta\/files\/[A-Za-z0-9._-]+$/.test(url.pathname)
     ) {
       return handleGeminiFiles(request, env, ctx);
+    }
+    // OpenAI + Anthropic Files API passthrough (point/ship large-media upload, leg A) —
+    // provider-agnostic: PDFs/images work on every cloud model. Namespaced by provider
+    // (both upstreams expose /v1/files). Multipart body forwarded verbatim; host frozen.
+    if (
+      (request.method === "POST" &&
+        (url.pathname === "/v1/openai/files" || url.pathname === "/v1/anthropic/files")) ||
+      (request.method === "DELETE" &&
+        /^\/v1\/(openai|anthropic)\/files\/[A-Za-z0-9._-]+$/.test(url.pathname))
+    ) {
+      return handleProviderFiles(request, env, ctx);
     }
     // W38-S822-FIX (S5b-1) — server_id-keyed generic forward egress route. The
     // worker-microVM's vsock relay forwards a guest's outbound request here; the
