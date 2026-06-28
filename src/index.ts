@@ -28,6 +28,7 @@ import { handleGrok } from "./routes/grok";
 import { handleQwen } from "./routes/qwen";
 import { handleGemini } from "./routes/gemini";
 import { handleGeminiNative } from "./routes/gemini-native";
+import { handleGeminiFiles } from "./routes/gemini-files";
 import { handleTierBind } from "./routes/tier-bind";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
@@ -62,6 +63,8 @@ export interface Env {
   GEMINI_API_KEY?: string;
   GEMINI_BASE_URL?: string;
   GEMINI_NATIVE_BASE_URL?: string;
+  GEMINI_UPLOAD_URL?: string; // point/ship Files-API media upload (host frozen; override for tests)
+  GEMINI_FILES_BASE_URL?: string; // point/ship Files-API delete base (host frozen)
   MISTRAL_API_KEY?: string;
   MISTRAL_BASE_URL?: string;
   DEEPSEEK_API_KEY?: string;
@@ -235,6 +238,19 @@ export default {
       /^\/v1beta\/models\/[A-Za-z0-9._-]+:generateContent$/.test(url.pathname)
     ) {
       return handleGeminiNative(request, env, ctx);
+    }
+    // Gemini Files API passthrough — point/ship large-media upload (leg A). The daemon
+    // uploads raw image/PDF/video bytes too large to ship inline, references the
+    // fileUri in generateContent, then DELETEs it. Host frozen server-side; the binary
+    // body is forwarded verbatim (no JSON parse, no classifier on raw bytes).
+    if (request.method === "POST" && url.pathname === "/v1beta/files:upload") {
+      return handleGeminiFiles(request, env, ctx);
+    }
+    if (
+      request.method === "DELETE" &&
+      /^\/v1beta\/files\/[A-Za-z0-9._-]+$/.test(url.pathname)
+    ) {
+      return handleGeminiFiles(request, env, ctx);
     }
     // W38-S822-FIX (S5b-1) — server_id-keyed generic forward egress route. The
     // worker-microVM's vsock relay forwards a guest's outbound request here; the
