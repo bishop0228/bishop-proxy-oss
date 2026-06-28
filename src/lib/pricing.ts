@@ -2,28 +2,37 @@
  * Pricing + tier caps.
  *
  * Cost is computed per-request in cents, rounded UP to the next whole cent
- * (Math.ceil). The per-1M-token rates below are sourced from Anthropic public
- * pricing as of brief codification:
- *   haiku  — $0.25 input / $1.25 output / $0.025 cached  per 1M tokens
- *   sonnet — $3.00 input / $15.00 output / $0.30 cached  per 1M tokens
- *   opus   — $15.00 input / $75.00 output / $1.50 cached per 1M tokens
- *            (PLACEHOLDER — matches Anthropic public rates late 2025;
- *             pricing finalization gated on ≥30-day staging measurement)
+ * (Math.ceil). The per-1M-token rates below are the LIVE Anthropic model rates
+ * (Haiku 4.5 / Sonnet 4.6 / Opus 4.8), verified against the 2026-06-28
+ * measured-cost probe run on the founder's key:
+ *   haiku  — $1.00 input / $5.00 output / $0.10 cached  per 1M tokens
+ *   sonnet — $3.00 input / $15.00 output / $0.30 cached per 1M tokens
+ *   opus   — $5.00 input / $25.00 output / $0.50 cached per 1M tokens
  *
  * Internal storage is cents-per-1M to keep one rounding boundary at the end.
  *
- * Task weighting (G11): haiku=1, sonnet=3, opus=5. Used by QuotaStoreDO when
- * incrementing the monthly_tasks counter — a single sonnet request consumes
- * 3 task units; opus consumes 5.
+ * Task counting (cost-derived, founder-ratified 2026-06-28): there is NO fixed
+ * per-model weight. One task unit = the cost of an average Haiku task
+ * (TASK_UNIT_MICROCENTS, below). Every metered call counts as
+ * tasksForCostMicroCents(its REAL cost) = round(cost ÷ unit), minimum 1 — so an
+ * average Haiku call ≈ 1, Sonnet ≈ 4, Opus ≈ 8, but a short answer counts less
+ * and a giant-file call counts more. The authoritative count is the exact
+ * cost-derived value at /increment; nominalTaskWeight() is only the pre-call
+ * /check estimate (real cost isn't known until the response returns).
  *
  * Tier caps (G12 / D2):
- *   free   — 100¢ monthly cost, 200 monthly tasks, 30 daily floor
- *   solo   — 480¢ monthly cost (PROVISIONAL — see brief), 2000 monthly tasks, no daily floor
+ *   free   — 60¢ monthly cost, 200 monthly tasks, 30/day ceiling (anti-grief)
+ *   solo   — 600¢ ($6) monthly cost, 2000 monthly tasks, no daily ceiling
  *   studio — all null (unmetered at P2.1; D2 defers studio row entirely until P2.2)
  *
- * NOTE on solo cap: 480¢ is severely undersized for Opus (~46 deep tasks at
- * ~10.5¢/task). Finalization gated on staging cost-measurement. Do not treat
- * as load-bearing outside this file.
+ * Both metered tiers run the cost-derived task count AND the $ cost cap together;
+ * whichever is reached first ends the month. For normal tasks the task count
+ * leads (the unit normalizes per-task cost); the $ cap only fires first on an
+ * abnormally expensive call. BYOK devices pay their own provider and bypass all.
+ *
+ * NOTE on caps: free $0.60/mo, solo $6/mo (founder-set 2026-06-28). Solo is
+ * $12/mo, so the $6 cap guarantees ≥50% margin. Authoritative tier caps —
+ * mirror docs/PRICING.md.
  */
 
 export type ModelFamily = "haiku" | "sonnet" | "opus";
@@ -36,9 +45,9 @@ export interface PricingRow {
 
 export const PRICING: Record<ModelFamily, PricingRow> = {
   haiku: {
-    input_cents_per_1m: 25,
-    output_cents_per_1m: 125,
-    cached_cents_per_1m: 2.5,
+    input_cents_per_1m: 100,
+    output_cents_per_1m: 500,
+    cached_cents_per_1m: 10,
   },
   sonnet: {
     input_cents_per_1m: 300,
@@ -46,16 +55,32 @@ export const PRICING: Record<ModelFamily, PricingRow> = {
     cached_cents_per_1m: 30,
   },
   opus: {
-    input_cents_per_1m: 1500,
-    output_cents_per_1m: 7500,
-    cached_cents_per_1m: 150,
+    input_cents_per_1m: 500,
+    output_cents_per_1m: 2500,
+    cached_cents_per_1m: 50,
   },
 };
 
-export const TASK_WEIGHTS: Record<ModelFamily, number> = {
-  haiku: 1,
-  sonnet: 3,
-  opus: 5,
+/**
+ * Cost-derived task counting (founder-ratified 2026-06-28). One task unit = the
+ * measured cost of an average Haiku task. Every metered call counts as
+ * round(its REAL cost ÷ unit), minimum 1 — the ONLY input is the call's actual
+ * dollar cost; there is no fixed per-model weight. 2800 micro-cents = $0.0028 =
+ * one average Haiku task (1002 in + 359 out at the live $1/$5 rates), from the
+ * 2026-06-28 BYOK-key probe.
+ */
+export const TASK_UNIT_MICROCENTS = 2800;
+
+/**
+ * Average measured cost (micro-cents) of one task per family — Haiku $0.0028,
+ * Sonnet $0.0098, Opus $0.0236 (same 2026-06-28 probe). Used ONLY for the
+ * pre-call /check estimate via nominalTaskWeight(); the authoritative count is
+ * the exact cost-derived tasksForCostMicroCents(real cost) at /increment.
+ */
+const AVG_TASK_MICROCENTS: Record<ModelFamily, number> = {
+  haiku: 2800,
+  sonnet: 9800,
+  opus: 23600,
 };
 
 export interface TierCap {
@@ -84,8 +109,8 @@ export type Tier = "free" | "solo" | "studio";
 export const MICROCENTS_PER_CENT = 10_000;
 
 export const TIER_CAPS: Record<Tier, TierCap> = {
-  free:   { monthly_cost_cents: 100, monthly_tasks: 200,  daily_floor: 30 },
-  solo:   { monthly_cost_cents: 480, monthly_tasks: 2000, daily_floor: null },
+  free:   { monthly_cost_cents: 60,  monthly_tasks: 200,  daily_floor: 30 },
+  solo:   { monthly_cost_cents: 600, monthly_tasks: 2000, daily_floor: null },
   studio: { monthly_cost_cents: null, monthly_tasks: null, daily_floor: null },
 };
 
@@ -146,6 +171,21 @@ export function computeCostMicroCents(family: ModelFamily, usage: Usage): number
   return Math.ceil(centsTimes1M / 100);
 }
 
-export function taskWeight(family: ModelFamily): number {
-  return TASK_WEIGHTS[family];
+/**
+ * Authoritative task count for a call's EXACT cost: round(cost ÷ unit), min 1.
+ * Used at /increment, where the real per-request cost is known. This is the
+ * only thing that decrements a user's 200 / 2,000 allowance.
+ */
+export function tasksForCostMicroCents(microcents: number): number {
+  return Math.max(1, Math.round(microcents / TASK_UNIT_MICROCENTS));
+}
+
+/**
+ * Pre-call /check estimate: the task count an average call of this family is
+ * expected to consume (tasksForCostMicroCents of the family's average cost,
+ * ≈ Haiku 1 / Sonnet 4 / Opus 8). NOT a billing weight — the real count is
+ * computed from the actual cost at /increment once the response returns.
+ */
+export function nominalTaskWeight(family: ModelFamily): number {
+  return tasksForCostMicroCents(AVG_TASK_MICROCENTS[family]);
 }

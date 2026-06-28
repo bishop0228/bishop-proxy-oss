@@ -24,7 +24,8 @@ import { logEvent, type ProxyLogEvent } from "../lib/log";
 import {
   computeCostMicroCents,
   modelFamily,
-  taskWeight,
+  nominalTaskWeight,
+  tasksForCostMicroCents,
   TIER_CAPS,
   MICROCENTS_PER_CENT,
   type ModelFamily,
@@ -136,7 +137,10 @@ export async function handleMessages(
     emitError(requestId, ip, requestSize, 400, "unsupported_model", startedAt, tokenId);
     return jsonError(400, "unsupported_model");
   }
-  const weight = taskWeight(family);
+  // Pre-call /check estimate only — the real cost (and thus the authoritative
+  // cost-derived task count) isn't known until the response returns; see the
+  // tasksForCostMicroCents(costMicroCents) increment below.
+  const checkWeight = nominalTaskWeight(family);
 
   // Step 4 — quota /check.
   const quotaStub = env.QUOTA_STORE.get(env.QUOTA_STORE.idFromName(tokenId));
@@ -147,7 +151,7 @@ export async function handleMessages(
     // free-tier daily_floor (it pays its own provider); managed/FREE stays metered.
     body: JSON.stringify({
       tier,
-      weight,
+      weight: checkWeight,
       cost_cents_estimate: 0,
       account_mode: record.account_mode ?? "managed",
     }),
@@ -222,6 +226,10 @@ export async function handleMessages(
     // W38-S938: meter the EXACT per-request cost in micro-cents (no per-request
     // ceil-to-1¢ floor) — the floor inflated the free-tier monthly_cost meter ~20×.
     const costMicroCents = computeCostMicroCents(family, usage);
+    // Cost-derived task count (founder-ratified 2026-06-28): the authoritative
+    // number of tasks this call consumed = round(real cost ÷ Haiku-task unit),
+    // min 1. No fixed per-model weight — cost is the only input.
+    const weight = tasksForCostMicroCents(costMicroCents);
     if (upstream.ok) {
       try {
         await quotaStub.fetch("https://internal/increment", {

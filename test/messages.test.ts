@@ -251,8 +251,8 @@ describe("POST /v1/messages", () => {
     expect(res.headers.get("X-Bishop-Cap-Type")).toBe("null");
     const remaining = res.headers.get("X-Bishop-Quota-Remaining");
     expect(remaining).toBeTruthy();
-    // Free tier monthly_cost_cents=100; pre-increment remaining is full cap.
-    expect(remaining).toBe("100");
+    // Free tier monthly_cost_cents=60; pre-increment remaining is full cap.
+    expect(remaining).toBe("60");
 
     // tee() should hand the client a byte-equivalent stream; verify SSE shape.
     const text = await res.text();

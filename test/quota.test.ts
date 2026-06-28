@@ -89,20 +89,20 @@ describe("rollPeriod", () => {
   });
 });
 
-describe("evaluateCheck — free tier (cap 100¢ = 1,000,000 micro-cents)", () => {
+describe("evaluateCheck — free tier (cap 60¢ = 600,000 micro-cents)", () => {
   it("allows when all caps would still be respected", () => {
-    const s = stateAt({ monthly_cost_microcents: 50 * C, monthly_tasks: 100, daily_tasks: 5 });
+    const s = stateAt({ monthly_cost_microcents: 30 * C, monthly_tasks: 100, daily_tasks: 5 });
     const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 10 });
     expect(r).toEqual({ ok: true });
   });
 
   it("rejects when monthly_cost would be exceeded", () => {
-    const s = stateAt({ monthly_cost_microcents: 95 * C, monthly_tasks: 0, daily_tasks: 0 });
+    const s = stateAt({ monthly_cost_microcents: 55 * C, monthly_tasks: 0, daily_tasks: 0 });
     const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 10 });
     expect(r).toEqual({ ok: false, reason: "monthly_cost_exceeded" });
   });
 
-  it("rejects when monthly_tasks would be exceeded (weight=3 from sonnet)", () => {
+  it("rejects when monthly_tasks would be exceeded (a multi-unit call, weight 3)", () => {
     const s = stateAt({ monthly_cost_microcents: 0, monthly_tasks: 199, daily_tasks: 0 });
     const r = evaluateCheck(s, { tier: "free", weight: 3, cost_cents_estimate: 0 });
     expect(r).toEqual({ ok: false, reason: "monthly_tasks_exceeded" });
@@ -115,16 +115,16 @@ describe("evaluateCheck — free tier (cap 100¢ = 1,000,000 micro-cents)", () =
   });
 
   it("cost-cap takes precedence over task-cap when both would fail", () => {
-    const s = stateAt({ monthly_cost_microcents: 100 * C, monthly_tasks: 200, daily_tasks: 30 });
+    const s = stateAt({ monthly_cost_microcents: 60 * C, monthly_tasks: 200, daily_tasks: 30 });
     const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 1 });
     expect(r).toEqual({ ok: false, reason: "monthly_cost_exceeded" });
   });
 
   // W38-S938: the metering-accuracy fix — sub-cent state below the cents-cap is
-  // NOT rejected. 99.9¢ of real spend (well under 100¢) passes even though the
-  // legacy per-request 1¢ floor would have inflated it past the cap long ago.
-  it("sub-cent accuracy: 99.9¢ of real micro-cent spend is still under the cap", () => {
-    const s = stateAt({ monthly_cost_microcents: 999_000, monthly_tasks: 10, daily_tasks: 1 });
+  // NOT rejected. 59.9¢ of real spend (just under the 60¢ cap) passes even though
+  // the legacy per-request 1¢ floor would have inflated it past the cap long ago.
+  it("sub-cent accuracy: 59.9¢ of real micro-cent spend is still under the cap", () => {
+    const s = stateAt({ monthly_cost_microcents: 599_000, monthly_tasks: 10, daily_tasks: 1 });
     const r = evaluateCheck(s, { tier: "free", weight: 1, cost_cents_estimate: 0 });
     expect(r).toEqual({ ok: true });
   });
@@ -218,8 +218,8 @@ describe("evaluateCheck — account_mode byok bypasses the monthly_cost cap", ()
   });
 });
 
-describe("evaluateCheck — solo tier (cap 480¢ = 4,800,000 micro-cents)", () => {
-  it("allows below 480¢ / 2000-task caps", () => {
+describe("evaluateCheck — solo tier (cap 600¢ = 6,000,000 micro-cents)", () => {
+  it("allows below 600¢ / 2000-task caps", () => {
     const s = stateAt({ monthly_cost_microcents: 100 * C, monthly_tasks: 500, daily_tasks: 999 });
     const r = evaluateCheck(s, { tier: "solo", weight: 3, cost_cents_estimate: 50 });
     expect(r).toEqual({ ok: true });
@@ -231,8 +231,8 @@ describe("evaluateCheck — solo tier (cap 480¢ = 4,800,000 micro-cents)", () =
     expect(r.ok).toBe(true);
   });
 
-  it("rejects at solo monthly_cost cap (480¢)", () => {
-    const s = stateAt({ monthly_cost_microcents: 480 * C, monthly_tasks: 0, daily_tasks: 0 });
+  it("rejects at solo monthly_cost cap (600¢)", () => {
+    const s = stateAt({ monthly_cost_microcents: 600 * C, monthly_tasks: 0, daily_tasks: 0 });
     const r = evaluateCheck(s, { tier: "solo", weight: 1, cost_cents_estimate: 1 });
     expect(r).toEqual({ ok: false, reason: "monthly_cost_exceeded" });
   });
