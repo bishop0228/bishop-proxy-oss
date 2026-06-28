@@ -42,6 +42,7 @@ import {
   emitRateLimit,
   emitResponse,
 } from "./messages";
+import { envVar } from "../lib/env-var";
 
 interface VerifyTokenResult {
   valid: boolean;
@@ -49,7 +50,12 @@ interface VerifyTokenResult {
   reason: "not_found" | "revoked" | "expired" | null;
 }
 
-const MAX_UPLOAD_BYTES = 100 * 1024 * 1024; // leg-A in-memory ceiling; bigger → leg B.
+// Explicit upload guard. The body is STREAMED (request.body), so this is bounded by
+// the Cloudflare ZONE request-body limit (Free/Pro 100 MB, Business 200 MB,
+// Enterprise 500 MB) — mybishop.ai is Free → 100 MB. Env-tunable
+// (PROVIDER_FILES_MAX_UPLOAD_BYTES) so a future CF plan upgrade is a one-line bump,
+// matching the daemon's BISHOP_MANAGED_UPLOAD_MAX_BYTES. Bigger files → BYOK (direct).
+const DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 // Host FROZEN server-side (single seal §3.2). { upload, delete-base } per provider.
 const DEFAULT_OPENAI_FILES = "https://api.openai.com/v1/files";
@@ -177,7 +183,9 @@ export async function handleProviderFiles(
     upstreamUrl = `${uploadUrl}/${m[1]}`;
     method = "DELETE";
   } else {
-    if (requestSize > MAX_UPLOAD_BYTES) {
+    const maxUploadBytes =
+      Number(envVar(env, "PROVIDER_FILES_MAX_UPLOAD_BYTES")) || DEFAULT_MAX_UPLOAD_BYTES;
+    if (requestSize > maxUploadBytes) {
       emitError(requestId, ip, requestSize, 413, "upload_too_large", startedAt, tokenId);
       return jsonError(413, "upload_too_large");
     }
