@@ -21,6 +21,7 @@ import { rebuildHeaders, resolveUpstreamKey } from "../lib/headers";
 import { extractUsageFromSSE } from "../lib/sse-usage";
 import { classify, type ClassifierResult } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
+import { fetchFollowingSameHost, isRedirectRefusal } from "../lib/redirect-policy";
 import {
   computeCostMicroCents,
   modelFamily,
@@ -328,6 +329,10 @@ export async function buildResponseHeaders(
 // body has been split and returned to the client, no retry is attempted.
 export const RETRY_BACKOFF_MS = [200, 800];
 
+// W38-S1047: a caller that names no redirect mode gets the same-host policy
+// (lib/redirect-policy.ts) — every credential-carrying route is one of those. The
+// model routes pass `redirect: "manual"` and keep their own allowlisted hop loop.
+// A refused redirect is an answer, not an outage, so it is never retried.
 export async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -335,8 +340,10 @@ export async function fetchWithRetry(url: string, init: RequestInit): Promise<Re
       await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS[attempt - 1]));
     }
     try {
-      const resp = await fetch(url, init);
-      if (resp.status < 500) return resp;
+      const resp = init.redirect === undefined
+        ? await fetchFollowingSameHost(url, init)
+        : await fetch(url, init);
+      if (resp.status < 500 || isRedirectRefusal(resp)) return resp;
       // 5xx — cancel body and retry. The unread body is treated as cancelled
       // by the runtime; we don't await it.
       lastError = resp;
