@@ -6,9 +6,9 @@
  *
  * Coverage:
  *   - byok token + no X-Bishop-Upstream-Key → 400 byok_key_missing
- *   - managed token + inbound X-Bishop-Upstream-Key → 200; operator key
- *     forwarded to mock, inbound key ignored
- *   - Pillar-1: managed 200 response headers carry no authorization /
+ *   - managed token → 403 managed_not_offered, nothing forwarded (W38-S1165: a
+ *     managed device's included models are Anthropic's, on /v1/messages)
+ *   - Pillar-1: a byok 200 response's headers carry no authorization /
  *     x-bishop-upstream-key / operator-key leak; content-type forwarded
  */
 
@@ -171,7 +171,7 @@ describe("OpenAI leg (/v1/chat/completions)", () => {
     expect(body.error).toBe("byok_key_missing");
   }, 30000);
 
-  it("managed + inbound X-Bishop-Upstream-Key → 200; mock sees operator key", async () => {
+  it("managed → 403 managed_not_offered; nothing reaches the upstream (W38-S1165)", async () => {
     const res = await worker.fetch("/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -181,18 +181,37 @@ describe("OpenAI leg (/v1/chat/completions)", () => {
       },
       body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("managed_not_offered");
     const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
     const { auth } = (await lastAuthRes.json()) as { auth: string | null };
-    expect(auth).toBe("Bearer op-openai-zzz");
+    expect(auth).toBeNull();
   }, 30000);
 
-  it("Pillar-1: managed 200 response headers carry no auth leak; content-type forwarded", async () => {
+  it("CONTROL: byok with its own key → 200; the mock sees that key, never the operator's", async () => {
     const res = await worker.fetch("/v1/chat/completions", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${managedToken}`,
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-openai-key",
+      },
+      body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
+    const { auth } = (await lastAuthRes.json()) as { auth: string | null };
+    expect(auth).toBe("Bearer user-openai-key");
+  }, 30000);
+
+  it("Pillar-1: a byok 200 response's headers carry no auth leak; content-type forwarded", async () => {
+    const res = await worker.fetch("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-openai-key",
       },
       body: JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }),
     });

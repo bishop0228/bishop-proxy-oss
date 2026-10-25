@@ -4,21 +4,23 @@
  *
  * Same single-seal §3.2 posture as the generateContent route: the upstream host is
  * FROZEN server-side (generativelanguage.googleapis.com) — never request-derived — and
- * auth is the native x-goog-api-key (managed → operator GEMINI_API_KEY; byok → the
- * user key), never the inbound daemon Bearer. The body is raw bytes, forwarded verbatim
- * (no JSON parse, no classifier). Every probe installs the REAL allowlist interceptor
- * over a stubbed global fetch, so the host gate is exercised genuinely.
+ * auth is the native x-goog-api-key, the user's own key, never the inbound daemon Bearer;
+ * a managed device is refused (W38-S1165: its included models are Anthropic's). The body
+ * is raw bytes, forwarded verbatim (no JSON parse, no classifier). Every probe installs
+ * the REAL allowlist interceptor over a stubbed global fetch, so the host gate is
+ * exercised genuinely.
  *
- *   (1) ★ upload managed → 200, forwarded to EXACTLY the frozen upload host/path, POST,
- *       body present, x-goog-api-key = operator key, daemon Bearer stripped.
- *   (2) ★ upload byok → x-goog-api-key = the user's x-bishop-upstream-key.
- *   (3) ★ entitlement managed-no-key → 400 managed_key_unavailable, NO forward.
- *   (4) ★ delete → forwarded to the frozen files base + the path-validated id, DELETE,
+ *   (1) ★ upload managed → 403 managed_not_offered, NO forward, with or without an
+ *       operator key bound.
+ *   (2) ★ upload byok → 200, forwarded to EXACTLY the frozen upload host/path, POST,
+ *       body present, x-goog-api-key = the user's x-bishop-upstream-key, daemon Bearer
+ *       stripped.
+ *   (3) ★ delete → forwarded to the frozen files base + the path-validated id, DELETE,
  *       no body.
- *   (5) ★ bad-token → 401, NO forward.
- *   (6) ★ quota 429 → 429 passthrough, NO forward.
- *   (7) ★ over-cap upload (content-length > leg-A ceiling) → 413, NO forward (leg B).
- *   (8) ★ host-frozen → an attacker X-Bishop-Egress-Target can't redirect the host.
+ *   (4) ★ bad-token → 401, NO forward.
+ *   (5) ★ quota 429 → 429 passthrough, NO forward.
+ *   (6) ★ over-cap upload (content-length > leg-A ceiling) → 413, NO forward (leg B).
+ *   (7) ★ host-frozen → an attacker X-Bishop-Egress-Target can't redirect the host.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -95,9 +97,10 @@ function uploadReq(opts: { bearer?: string | null; mime?: string; byokKey?: stri
   Object.assign(headers, opts.extraHeaders ?? {});
   return new Request(`http://proxy/v1beta/files:upload`, { method: "POST", headers, body: "RAW-MEDIA-BYTES" });
 }
-function deleteReq(fileId = "files/abc", bearer: string | null = DAEMON_BEARER): Request {
+function deleteReq(fileId = "files/abc", bearer: string | null = DAEMON_BEARER, byokKey?: string): Request {
   const headers: Record<string, string> = {};
   if (bearer !== null) headers["authorization"] = `Bearer ${bearer}`;
+  if (byokKey) headers["x-bishop-upstream-key"] = byokKey;
   return new Request(`http://proxy/v1beta/${fileId}`, { method: "DELETE", headers });
 }
 
@@ -123,9 +126,21 @@ describe("Gemini Files API passthrough (POST /v1beta/files:upload, DELETE /v1bet
   beforeEach(() => { captures = []; });
   afterEach(() => { _resetForTesting(); vi.unstubAllGlobals(); });
 
-  it("★ upload managed: 200, forwarded to EXACTLY the frozen upload host/path; POST; body present; operator key; daemon Bearer stripped", async () => {
+  it("★ upload managed: 403 managed_not_offered, NO forward, whether or not an operator key is bound (W38-S1165)", async () => {
     installFetch();
-    const resp = await handleGeminiFiles(uploadReq(), makeEnv(), makeCtx());
+    for (const geminiKey of [undefined, null]) {
+      const resp = await handleGeminiFiles(uploadReq(), makeEnv({ geminiKey }), makeCtx());
+      expect(resp.status).toBe(403);
+      expect(((await resp.json()) as { error: string }).error).toBe("managed_not_offered");
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("★ upload byok: 200, forwarded to EXACTLY the frozen upload host/path; POST; body present; the user's key; daemon Bearer stripped", async () => {
+    installFetch();
+    const resp = await handleGeminiFiles(
+      uploadReq({ byokKey: BYOK_KEY }),
+      makeEnv({ accountMode: "byok" }), makeCtx());
     expect(resp.status).toBe(200);
     expect(mockFetch).toHaveBeenCalledOnce();
     const u = new URL(captures[0].url);
@@ -134,31 +149,15 @@ describe("Gemini Files API passthrough (POST /v1beta/files:upload, DELETE /v1bet
     expect(captures[0].method.toUpperCase()).toBe("POST");
     expect(captures[0].hasBody).toBe(true);
     const fwd = captures[0].headers;
-    expect(fwd.get("x-goog-api-key")).toBe(OPERATOR_KEY);
+    expect(fwd.get("x-goog-api-key")).toBe(BYOK_KEY);
     expect(fwd.get("authorization")).toBeNull();          // daemon Bearer never leaks (Pillar 1)
     expect(fwd.get("content-type")).toBe("application/pdf"); // the mime is preserved
   });
 
-  it("★ upload byok: x-goog-api-key = the user's key (never the inbound Bearer)", async () => {
-    installFetch();
-    const resp = await handleGeminiFiles(
-      uploadReq({ byokKey: BYOK_KEY, mime: "image/png" }),
-      makeEnv({ accountMode: "byok" }), makeCtx());
-    expect(resp.status).toBe(200);
-    expect(captures[0].headers.get("x-goog-api-key")).toBe(BYOK_KEY);
-  });
-
-  it("★ entitlement managed-no-key: 400 managed_key_unavailable, NO forward (never reads inbound key)", async () => {
-    installFetch();
-    const resp = await handleGeminiFiles(uploadReq(), makeEnv({ geminiKey: null }), makeCtx());
-    expect(resp.status).toBe(400);
-    expect(((await resp.json()) as { error: string }).error).toBe("managed_key_unavailable");
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
   it("★ delete: forwarded to the frozen files base + path-validated id, DELETE, no body", async () => {
     installFetch();
-    const resp = await handleGeminiFiles(deleteReq("files/abc"), makeEnv(), makeCtx());
+    const resp = await handleGeminiFiles(
+      deleteReq("files/abc", DAEMON_BEARER, BYOK_KEY), makeEnv({ accountMode: "byok" }), makeCtx());
     expect(resp.status).toBe(200);
     const u = new URL(captures[0].url);
     expect(u.hostname).toBe(UPLOAD_HOST);
@@ -177,7 +176,8 @@ describe("Gemini Files API passthrough (POST /v1beta/files:upload, DELETE /v1bet
 
   it("★ quota 429 → 429 passthrough, NO forward", async () => {
     installFetch();
-    const resp = await handleGeminiFiles(uploadReq(), makeEnv({ quotaStatus: 429 }), makeCtx());
+    const resp = await handleGeminiFiles(
+      uploadReq({ byokKey: BYOK_KEY }), makeEnv({ quotaStatus: 429, accountMode: "byok" }), makeCtx());
     expect(resp.status).toBe(429);
     expect(((await resp.json()) as { error: string }).error).toBe("quota_exceeded");
     expect(mockFetch).not.toHaveBeenCalled();
@@ -186,7 +186,8 @@ describe("Gemini Files API passthrough (POST /v1beta/files:upload, DELETE /v1bet
   it("★ over-cap upload (content-length > leg-A ceiling) → 413, NO forward (leg B's job)", async () => {
     installFetch();
     const tooBig = String(100 * 1024 * 1024 + 1);
-    const resp = await handleGeminiFiles(uploadReq({ contentLength: tooBig }), makeEnv(), makeCtx());
+    const resp = await handleGeminiFiles(
+      uploadReq({ contentLength: tooBig, byokKey: BYOK_KEY }), makeEnv({ accountMode: "byok" }), makeCtx());
     expect(resp.status).toBe(413);
     expect(((await resp.json()) as { error: string }).error).toBe("upload_too_large");
     expect(mockFetch).not.toHaveBeenCalled();
@@ -195,8 +196,8 @@ describe("Gemini Files API passthrough (POST /v1beta/files:upload, DELETE /v1bet
   it("★ host-frozen: an attacker X-Bishop-Egress-Target does NOT redirect the upload host", async () => {
     installFetch();
     const resp = await handleGeminiFiles(
-      uploadReq({ extraHeaders: { "x-bishop-egress-target": "https://evil-cdn.attacker.example/exfil" } }),
-      makeEnv(), makeCtx());
+      uploadReq({ byokKey: BYOK_KEY, extraHeaders: { "x-bishop-egress-target": "https://evil-cdn.attacker.example/exfil" } }),
+      makeEnv({ accountMode: "byok" }), makeCtx());
     expect(resp.status).toBe(200);
     expect(new URL(captures[0].url).hostname).toBe(UPLOAD_HOST);
     expect(new URL(captures[0].url).hostname).not.toBe("evil-cdn.attacker.example");

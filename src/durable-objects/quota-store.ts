@@ -14,6 +14,13 @@
  *                     boundaries defensively. A byok account_mode skips ALL free-
  *                     tier counters — cost meter + task counters (S937/S939 — it
  *                     pays its own provider, so it touches no free-tier meter).
+ *   POST /upload-reserve — W38-S1165: a managed device's upload to the Anthropic
+ *                     Files API. Body: { tier, bytes }. Checks UPLOAD_CAPS and, if it
+ *                     fits, counts it, in one transaction, so two uploads at once
+ *                     cannot both slip under the limit. 429 { ok: false, reason }
+ *                     when it does not fit; else { ok: true, period_month }.
+ *   POST /upload-release — the upload failed upstream: give its reservation back.
+ *                     Body: { bytes, period_month }. A no-op once the month rolled.
  *   GET  /          — debug/observability. Returns the current state.
  *
  * Storage shape (G9):
@@ -25,6 +32,8 @@
  *                        on read by migrateState() — never crash on an old shape.
  *   monthly_tasks      — integer (haiku=1, sonnet=3 weighting per pricing.ts)
  *   daily_tasks        — integer (same weighting; only enforced for free tier)
+ *   monthly_uploads, monthly_upload_bytes — W38-S1165: a managed device's uploads to
+ *                        the Anthropic Files API this month (0 on an older record)
  *
  * Period rollover happens lazily on every read/write so we don't depend on
  * alarm() firing at the boundary; alarm() is set as a defensive sweep at the
@@ -36,7 +45,7 @@
  * (test/quota.test.ts) since this repo does not include @cloudflare/vitest-pool-workers.
  */
 
-import { TIER_CAPS, MICROCENTS_PER_CENT, type Tier } from "../lib/pricing";
+import { TIER_CAPS, UPLOAD_CAPS, MICROCENTS_PER_CENT, type Tier } from "../lib/pricing";
 
 export interface QuotaState {
   period_month: string;       // "YYYY-MM" UTC
@@ -49,6 +58,9 @@ export interface QuotaState {
   monthly_cost_microcents: number;
   monthly_tasks: number;
   daily_tasks: number;
+  // W38-S1165: a managed device's uploads to the Anthropic Files API this month, and their total bytes.
+  monthly_uploads: number;
+  monthly_upload_bytes: number;
 }
 
 export interface CheckRequest {
@@ -101,6 +113,8 @@ export function rollPeriod(state: QuotaState, now: Date = new Date()): QuotaStat
     monthly_cost_microcents: monthlyStale ? 0 : state.monthly_cost_microcents,
     monthly_tasks: monthlyStale ? 0 : state.monthly_tasks,
     daily_tasks: dailyStale ? 0 : state.daily_tasks,
+    monthly_uploads: monthlyStale ? 0 : state.monthly_uploads,
+    monthly_upload_bytes: monthlyStale ? 0 : state.monthly_upload_bytes,
   };
 }
 
@@ -112,6 +126,8 @@ export function emptyState(now: Date = new Date()): QuotaState {
     monthly_cost_microcents: 0,
     monthly_tasks: 0,
     daily_tasks: 0,
+    monthly_uploads: 0,
+    monthly_upload_bytes: 0,
   };
 }
 
@@ -143,6 +159,8 @@ export function migrateState(raw: unknown, now: Date = new Date()): QuotaState {
     monthly_cost_microcents: microcents,
     monthly_tasks: typeof r.monthly_tasks === "number" ? r.monthly_tasks : 0,
     daily_tasks: typeof r.daily_tasks === "number" ? r.daily_tasks : 0,
+    monthly_uploads: typeof r.monthly_uploads === "number" ? r.monthly_uploads : 0,
+    monthly_upload_bytes: typeof r.monthly_upload_bytes === "number" ? r.monthly_upload_bytes : 0,
   };
 }
 
@@ -226,6 +244,47 @@ export function applyIncrement(
   };
 }
 
+export interface UploadReserveRequest {
+  tier: Tier;
+  bytes: number;
+}
+
+export interface UploadResult {
+  ok: boolean;
+  reason?: "monthly_uploads_exceeded" | "monthly_upload_bytes_exceeded" | "upload_size_unknown";
+}
+
+/**
+ * W38-S1165: whether one more managed upload of `bytes` fits this month's UPLOAD_CAPS for the tier ("after-the-add",
+ * as evaluateCheck: a cap of 20 allows the 20th upload and refuses the 21st). A size that is not a non-negative whole
+ * number is refused: the count would be wrong.
+ */
+export function evaluateUpload(state: QuotaState, req: UploadReserveRequest): UploadResult {
+  if (!Number.isInteger(req.bytes) || req.bytes < 0) return { ok: false, reason: "upload_size_unknown" };
+  const cap = UPLOAD_CAPS[req.tier];
+  if (state.monthly_uploads + 1 > cap.monthly_uploads) return { ok: false, reason: "monthly_uploads_exceeded" };
+  if (state.monthly_upload_bytes + req.bytes > cap.monthly_upload_bytes) {
+    return { ok: false, reason: "monthly_upload_bytes_exceeded" };
+  }
+  return { ok: true };
+}
+
+export function reserveUpload(state: QuotaState, bytes: number): QuotaState {
+  return {
+    ...state,
+    monthly_uploads: state.monthly_uploads + 1,
+    monthly_upload_bytes: state.monthly_upload_bytes + bytes,
+  };
+}
+
+export function releaseUpload(state: QuotaState, bytes: number): QuotaState {
+  return {
+    ...state,
+    monthly_uploads: Math.max(0, state.monthly_uploads - 1),
+    monthly_upload_bytes: Math.max(0, state.monthly_upload_bytes - Math.max(0, bytes)),
+  };
+}
+
 const STATE_KEY = "quota_state";
 
 export class QuotaStoreDO {
@@ -278,6 +337,40 @@ export class QuotaStoreDO {
       // schedule defensive month-boundary sweep
       await this._scheduleNextMonthAlarm();
       return new Response(JSON.stringify(next!), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/upload-reserve") {
+      const body = (await request.json()) as UploadReserveRequest;
+      let result: UploadResult = { ok: false };
+      let period = "";
+      await this.state.storage.transaction(async (txn) => {
+        const stored = await txn.get<unknown>(STATE_KEY);
+        const current = rollPeriod(migrateState(stored));
+        period = current.period_month;
+        result = evaluateUpload(current, body);
+        if (result.ok) await txn.put(STATE_KEY, reserveUpload(current, body.bytes));
+      });
+      if (result.ok) await this._scheduleNextMonthAlarm();
+      return new Response(JSON.stringify(result.ok ? { ok: true, period_month: period } : result), {
+        status: result.ok ? 200 : 429,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "POST" && url.pathname === "/upload-release") {
+      const body = (await request.json()) as { bytes: number; period_month: string };
+      await this.state.storage.transaction(async (txn) => {
+        const stored = await txn.get<unknown>(STATE_KEY);
+        const current = rollPeriod(migrateState(stored));
+        // A reservation made last month is not taken off this month's count.
+        if (current.period_month === body.period_month) {
+          await txn.put(STATE_KEY, releaseUpload(current, body.bytes));
+        }
+      });
+      return new Response(JSON.stringify({ ok: true }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

@@ -3,14 +3,14 @@
  *
  * Coverage:
  *   - byok token + no X-Bishop-Upstream-Key → 400 byok_key_missing (×3, one per leg)
- *   - managed token + inbound X-Bishop-Upstream-Key → 200; operator key forwarded
- *     to mock, inbound key ignored (×3)
- *   - Pillar-1: managed 200 response headers carry no authorization /
+ *   - managed token → 403 managed_not_offered, nothing forwarded (×3; W38-S1165: a
+ *     managed device's included models are Anthropic's, on /v1/messages)
+ *   - Pillar-1: a byok 200 response's headers carry no authorization /
  *     x-bishop-upstream-key / operator-key leak; content-type forwarded (×1)
  *   - W38-S970 NATIVE Gemini route (/v1beta/models/{model}:generateContent):
  *     the daemon's native generateContent URL shape hits a REAL proxy route
- *     (200, not the default 404) — byok fail-closed, managed forwards the
- *     operator key as x-goog-api-key (native auth, not Bearer), no inbound leak.
+ *     (200, not the default 404) — byok fail-closed without a key, byok's own key
+ *     forwarded as x-goog-api-key (native auth, not Bearer), managed refused.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
@@ -205,9 +205,9 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
     expect(body.error).toBe("byok_key_missing");
   }, 30000);
 
-  // ---- managed: operator key forwarded, inbound key ignored (×3) ----
+  // ---- managed: refused before any key or forward (×3; W38-S1165) ----
 
-  it("grok: managed + inbound X-Bishop-Upstream-Key → 200; mock sees operator key", async () => {
+  it("grok: managed → 403 managed_not_offered; nothing reaches the upstream", async () => {
     const res = await worker.fetch("/v1/grok/chat/completions", {
       method: "POST",
       headers: {
@@ -217,13 +217,15 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
       },
       body: JSON.stringify({ model: "grok-3", messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("managed_not_offered");
     const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
     const { auth } = (await lastAuthRes.json()) as { auth: string | null };
-    expect(auth).toBe("Bearer op-xai-zzz");
+    expect(auth).toBeNull();
   }, 30000);
 
-  it("qwen: managed + inbound X-Bishop-Upstream-Key → 200; mock sees operator key", async () => {
+  it("qwen: managed → 403 managed_not_offered; nothing reaches the upstream", async () => {
     const res = await worker.fetch("/v1/qwen/chat/completions", {
       method: "POST",
       headers: {
@@ -233,13 +235,15 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
       },
       body: JSON.stringify({ model: "qwen-max", messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("managed_not_offered");
     const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
     const { auth } = (await lastAuthRes.json()) as { auth: string | null };
-    expect(auth).toBe("Bearer op-qwen-zzz");
+    expect(auth).toBeNull();
   }, 30000);
 
-  it("gemini: managed + inbound X-Bishop-Upstream-Key → 200; mock sees operator key", async () => {
+  it("gemini: managed → 403 managed_not_offered; nothing reaches the upstream", async () => {
     const res = await worker.fetch("/v1/gemini/chat/completions", {
       method: "POST",
       headers: {
@@ -249,20 +253,23 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
       },
       body: JSON.stringify({ model: "gemini-2.0-flash", messages: [{ role: "user", content: "hi" }] }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe("managed_not_offered");
     const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
     const { auth } = (await lastAuthRes.json()) as { auth: string | null };
-    expect(auth).toBe("Bearer op-gemini-zzz");
+    expect(auth).toBeNull();
   }, 30000);
 
   // ---- Pillar-1: response headers carry no credential leak ----
 
-  it("Pillar-1: managed 200 response headers carry no auth leak; content-type forwarded", async () => {
+  it("Pillar-1: a byok 200 response's headers carry no auth leak; content-type forwarded", async () => {
     const res = await worker.fetch("/v1/grok/chat/completions", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${managedToken}`,
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-xai-key",
       },
       body: JSON.stringify({ model: "grok-3", messages: [{ role: "user", content: "hi" }] }),
     });
@@ -284,12 +291,13 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
     // Anti-fixture-mask: the W9.7-class regression was that the daemon spoke
     // native :generateContent while the proxy served only the OpenAI-compat path,
     // so every native call fell through to the catch-all 404. Asserting 200 here
-    // (a managed call against a real upstream) proves the URL shapes MATCH.
+    // (a byok call with its own key against a real upstream) proves the URL shapes MATCH.
     const res = await worker.fetch(NATIVE_PATH, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${managedToken}`,
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-gemini-key",
       },
       body: NATIVE_BODY,
     });
@@ -313,7 +321,7 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
     expect(body.error).toBe("byok_key_missing");
   }, 30000);
 
-  it("gemini-native: managed forwards operator key as x-goog-api-key (native auth), inbound key ignored", async () => {
+  it("gemini-native: managed → 403 managed_not_offered; no key reaches the upstream (W38-S1165)", async () => {
     const res = await worker.fetch(NATIVE_PATH, {
       method: "POST",
       headers: {
@@ -323,11 +331,26 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
       },
       body: NATIVE_BODY,
     });
-    expect(res.status).toBe(200);
-    // Native auth header — NOT Bearer; carries the operator key, never the inbound one.
+    expect(res.status).toBe(403);
     const keyRes = await mock.fetch(mockUrl + "/__last_goog_key");
     const { key } = (await keyRes.json()) as { key: string | null };
-    expect(key).toBe("op-gemini-zzz");
+    expect(key).toBeNull();
+  }, 30000);
+
+  it("gemini-native: byok's own key is forwarded as x-goog-api-key (native auth), not Bearer", async () => {
+    const res = await worker.fetch(NATIVE_PATH, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-gemini-key",
+      },
+      body: NATIVE_BODY,
+    });
+    expect(res.status).toBe(200);
+    const keyRes = await mock.fetch(mockUrl + "/__last_goog_key");
+    const { key } = (await keyRes.json()) as { key: string | null };
+    expect(key).toBe("user-gemini-key");
     const authRes = await mock.fetch(mockUrl + "/__last_auth");
     const { auth } = (await authRes.json()) as { auth: string | null };
     expect(auth).toBeNull(); // native leg sends no Authorization upstream
@@ -347,12 +370,13 @@ describe("non-OpenAI legs (grok/qwen/gemini)", () => {
     expect(res.status).toBe(404); // unmatched → default handler, never an upstream call
   }, 30000);
 
-  it("gemini-native: Pillar-1 — managed 200 response carries no auth/key leak", async () => {
+  it("gemini-native: Pillar-1 — a byok 200 response carries no auth/key leak", async () => {
     const res = await worker.fetch(NATIVE_PATH, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${managedToken}`,
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-gemini-key",
       },
       body: NATIVE_BODY,
     });

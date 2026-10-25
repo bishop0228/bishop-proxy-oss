@@ -3,8 +3,8 @@
  *
  * Per-segment probes scale with the SEGMENTS table (22 segs after W38-S968):
  *   byok fail-closed    ×N   (no X-Bishop-Upstream-Key → 400 byok_key_missing, one per seg)
- *   managed-forwarded   ×N   (bearer: mock sees Bearer op-<seg>-zzz)
- *   Pillar-1 no-leak    ×1   (response headers carry no credential)
+ *   managed-refused     ×N   (403 managed_not_offered, nothing forwarded — W38-S1165)
+ *   Pillar-1 no-leak    ×1   (a byok response's headers carry no credential)
  *   unknown-provider    ×1   (POST /byok/unknown-xyz/... → 404 unknown_provider)
  *   allowlist-coverage  ×1   (every BYOK upstreamHost + regionHosts value in ALLOWED_OUTBOUND_HOSTS)
  *   region-selection    ×3   (W38-S966 resolveByokUpstreamHost: single/dual/fallback)
@@ -220,10 +220,10 @@ describe("BYOK legs (/byok/<seg>/...)", () => {
     }, 30000);
   }
 
-  // ---- managed: operator key forwarded ×14 (all bearer) ----
+  // ---- managed: refused before any key or forward ×N (W38-S1165) ----
 
-  for (const { seg, path, opKey } of SEGMENTS) {
-    it(`${seg}: managed → mock sees Bearer ${opKey}`, async () => {
+  for (const { seg, path } of SEGMENTS) {
+    it(`${seg}: managed → 403 managed_not_offered; nothing reaches the upstream`, async () => {
       const res = await worker.fetch(path, {
         method: "POST",
         headers: {
@@ -233,21 +233,40 @@ describe("BYOK legs (/byok/<seg>/...)", () => {
         },
         body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] }),
       });
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(403);
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe("managed_not_offered");
       const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
       const { auth } = (await lastAuthRes.json()) as { auth: string | null };
-      expect(auth).toBe(`Bearer ${opKey}`);
+      expect(auth).toBeNull();
     }, 30000);
   }
 
-  // ---- Pillar-1: response headers carry no credential leak ----
-
-  it("Pillar-1: managed 200 response headers carry no auth leak; content-type forwarded", async () => {
+  it("CONTROL: byok with its own key → 200; the mock sees that key", async () => {
     const res = await worker.fetch("/byok/mistral/v1/chat/completions", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        authorization: `Bearer ${managedToken}`,
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-mistral-key",
+      },
+      body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] }),
+    });
+    expect(res.status).toBe(200);
+    const lastAuthRes = await mock.fetch(mockUrl + "/__last_auth");
+    const { auth } = (await lastAuthRes.json()) as { auth: string | null };
+    expect(auth).toBe("Bearer user-mistral-key");
+  }, 30000);
+
+  // ---- Pillar-1: response headers carry no credential leak ----
+
+  it("Pillar-1: a byok 200 response's headers carry no auth leak; content-type forwarded", async () => {
+    const res = await worker.fetch("/byok/mistral/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${byokToken}`,
+        "x-bishop-upstream-key": "user-mistral-key",
       },
       body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] }),
     });

@@ -18,6 +18,7 @@
 
 import type { Env } from "../index";
 import { rebuildHeaders, resolveUpstreamKey } from "../lib/headers";
+import { servedMode } from "../lib/managed-scope";
 import { extractUsageFromSSE } from "../lib/sse-usage";
 import { classify, type ClassifierResult } from "../lib/classifier";
 import { logEvent, type ProxyLogEvent } from "../lib/log";
@@ -121,6 +122,11 @@ export async function handleMessages(
   // Step 3 — tier-cache read keyed by token_id (G4).
   const tier = await readTier(env, tokenId);
 
+  // W38-S1168 (founder decision 2026-10-25, (a)): a paying device keeps its included models after it connects a
+  // provider of its own; whether this request names a key of its own decides the mode, and the quota check, the key
+  // and the increment below all read it.
+  const accountMode = servedMode(record.account_mode, tier, request.headers);
+
   // Parse body to read model id BEFORE quota check (we need the model family
   // for task weighting). Body is JSON for streaming requests; max size is
   // bounded by Cloudflare worker request limits. We do NOT log the body.
@@ -154,7 +160,7 @@ export async function handleMessages(
       tier,
       weight: checkWeight,
       cost_cents_estimate: 0,
-      account_mode: record.account_mode ?? "managed",
+      account_mode: accountMode,
     }),
   });
   if (checkResp.status === 429) {
@@ -180,7 +186,6 @@ export async function handleMessages(
   if (gateResponse) return gateResponse;
 
   // Step 6 — BYOK entitlement gate: resolve upstream key (fail-closed).
-  const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, env.ANTHROPIC_API_KEY);
   if (!keyResolution.ok) {
     emitError(requestId, ip, requestSize, 400, keyResolution.reason, startedAt, tokenId);

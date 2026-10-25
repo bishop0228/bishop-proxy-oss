@@ -24,13 +24,15 @@
  *     upload itself is transparency-tagged (the daemon's dynamic retention tag degrades
  *     to "stored"), the chosen posture — never silently blocked.
  *
- * Entitlement gate (fail-closed): managed → operator GEMINI_API_KEY
- * (managed_key_unavailable if absent — never reads the inbound header); byok → the user
- * key (byok_key_missing if absent).
+ * Entitlement gate (fail-closed): a managed device is refused right after its token is
+ * verified (403 managed_not_offered, W38-S1165: its included models are Anthropic's, on
+ * /v1/messages, and its uploads go to /v1/anthropic/files), so this route spends only the
+ * user key (byok_key_missing if absent), whatever operator key the Worker binds.
  */
 
 import type { Env } from "../index";
 import { resolveUpstreamKey, rebuildGeminiNativeHeaders } from "../lib/headers";
+import { isManaged, MANAGED_NOT_OFFERED } from "../lib/managed-scope";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -104,6 +106,13 @@ export async function handleGeminiFiles(
   const record = verify.record;
   const tokenId = record.token_id;
 
+  // W38-S1165 (founder decision 2026-10-25, (b)): a managed device's included models are Anthropic's, on
+  // /v1/messages; this route serves only a device's own key, whatever operator keys the Worker binds.
+  if (isManaged(record.account_mode)) {
+    emitError(requestId, ip, requestSize, 403, MANAGED_NOT_OFFERED, startedAt, tokenId);
+    return jsonError(403, MANAGED_NOT_OFFERED);
+  }
+
   // Step 3 — tier-cache read keyed by token_id.
   const tier = await readTier(env, tokenId);
 
@@ -135,7 +144,7 @@ export async function handleGeminiFiles(
     );
   }
 
-  // Step 5 — entitlement gate (fail-closed). Managed → operator GEMINI_API_KEY.
+  // Step 5 — entitlement gate (fail-closed): the user key; a managed device was refused above (W38-S1165).
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, env.GEMINI_API_KEY ?? null);
   if (!keyResolution.ok) {

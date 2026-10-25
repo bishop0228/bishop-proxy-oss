@@ -114,6 +114,33 @@ export const TIER_CAPS: Record<Tier, TierCap> = {
   studio: { monthly_cost_cents: null, monthly_tasks: null, daily_floor: null },
 };
 
+export interface UploadCap {
+  monthly_uploads: number;
+  monthly_upload_bytes: number;
+}
+
+const MIB = 1024 * 1024;
+
+/**
+ * W38-S1165 (founder decision 2026-10-25, (b), with a per-device upload limit): what a managed device may upload to the
+ * Anthropic Files API (/v1/anthropic/files) in a month, counted per device token and reset with the monthly counters:
+ * the number of uploads and their total size. An upload made with the device's own key is not counted.
+ *
+ * The values were proposed with the derivation below and approved by the founder as proposed (2026-10-25, ~16:17 PT):
+ *   - The daemon uploads a file only when it is over 15 MiB (`INLINE_MAX_BYTES`, daemon/src/model/provider_files.py)
+ *     and at most 100 MiB (`PROVIDER_FILES_MAX_UPLOAD_BYTES` here), so every managed upload is 15-100 MiB.
+ *   - A file is uploaded to be used in a task, and the plans cap tasks a month (TIER_CAPS above: free 200, solo 2,000).
+ *     Supposing at most one task in ten carries a file over 15 MiB: free 20 uploads a month, solo 200.
+ *   - Total size: that count times 50 MiB, about the middle of 15-100 MiB, so a device that sends only the largest
+ *     files reaches the size limit at half the count.
+ *   - Studio has no caps of its own yet (TIER_CAPS above); it takes Solo's until it does.
+ */
+export const UPLOAD_CAPS: Record<Tier, UploadCap> = {
+  free:   { monthly_uploads: 20,  monthly_upload_bytes: 20 * 50 * MIB },
+  solo:   { monthly_uploads: 200, monthly_upload_bytes: 200 * 50 * MIB },
+  studio: { monthly_uploads: 200, monthly_upload_bytes: 200 * 50 * MIB },
+};
+
 export interface Usage {
   input_tokens: number;
   output_tokens: number;

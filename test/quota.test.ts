@@ -11,6 +11,8 @@
  * The pure helpers below — currentPeriod, rollPeriod, evaluateCheck,
  * applyIncrement, migrateState — carry the cap-comparison, period-rollover and
  * micro-cent migration logic and are unit-testable here without DO infra.
+ * W38-S1165's two upload routes are driven through QuotaStoreDO.fetch over an
+ * in-memory storage at the end of this file.
  *
  * W38-S938: the monthly cost meter accumulates in MICRO-CENTS (cents × 10,000)
  * so a sub-cent request is metered at its true cost rather than floored to ≥1¢.
@@ -26,8 +28,13 @@ import {
   applyIncrement,
   migrateState,
   isLegacyShape,
+  evaluateUpload,
+  reserveUpload,
+  releaseUpload,
+  QuotaStoreDO,
   type QuotaState,
 } from "../src/durable-objects/quota-store";
+import { UPLOAD_CAPS } from "../src/lib/pricing";
 
 const C = 10_000; // micro-cents per cent (mirror of MICROCENTS_PER_CENT)
 
@@ -38,6 +45,8 @@ function stateAt(opts: Partial<QuotaState> = {}): QuotaState {
     monthly_cost_microcents: 0,
     monthly_tasks: 0,
     daily_tasks: 0,
+    monthly_uploads: 0,
+    monthly_upload_bytes: 0,
     ...opts,
   };
 }
@@ -63,12 +72,16 @@ describe("rollPeriod", () => {
       monthly_cost_microcents: 99 * C,
       monthly_tasks: 150,
       daily_tasks: 10,
+      monthly_uploads: 4,
+      monthly_upload_bytes: 90,
     });
     const now = new Date(Date.UTC(2026, 3, 1));
     const next = rollPeriod(s, now);
     expect(next.monthly_cost_microcents).toBe(0);
     expect(next.monthly_tasks).toBe(0);
     expect(next.daily_tasks).toBe(0); // day also rolled
+    expect(next.monthly_uploads).toBe(0); // W38-S1165: the upload limit is monthly too
+    expect(next.monthly_upload_bytes).toBe(0);
     expect(next.period_month).toBe("2026-04");
   });
 
@@ -79,12 +92,16 @@ describe("rollPeriod", () => {
       monthly_cost_microcents: 50 * C,
       monthly_tasks: 25,
       daily_tasks: 30,
+      monthly_uploads: 4,
+      monthly_upload_bytes: 90,
     });
     const now = new Date(Date.UTC(2026, 3, 28));
     const next = rollPeriod(s, now);
     expect(next.monthly_cost_microcents).toBe(50 * C);
     expect(next.monthly_tasks).toBe(25);
     expect(next.daily_tasks).toBe(0);
+    expect(next.monthly_uploads).toBe(4);
+    expect(next.monthly_upload_bytes).toBe(90);
     expect(next.period_day).toBe("2026-04-28");
   });
 });
@@ -264,6 +281,8 @@ describe("applyIncrement", () => {
       monthly_cost_microcents: 35,
       monthly_tasks: 8,
       daily_tasks: 5,
+      monthly_uploads: 0,
+      monthly_upload_bytes: 0,
     });
   });
 
@@ -287,6 +306,8 @@ describe("applyIncrement", () => {
       monthly_cost_microcents: 10,
       monthly_tasks: 5,
       daily_tasks: 2,
+      monthly_uploads: 0,
+      monthly_upload_bytes: 0,
     });
   });
 
@@ -349,6 +370,19 @@ describe("W38-S939 INVARIANT — byok clears EVERY free-tier gate (no whack-a-mo
     expect(r.ok).toBe(false);
     expect(r.reason).toMatch(/_exceeded$/);
   });
+
+  // W38-S1165's upload limit is the cap dimension added since: it gates uploads alone. A byok upload is never counted
+  // (the Files route reserves only an upload served as managed: test/provider-files.test.ts), and a model call neither
+  // reads nor moves the upload counters, in either mode.
+  it("W38-S1165: the upload counters gate no model call and no increment moves them", () => {
+    const uploadsFull = stateAt({ monthly_uploads: 10_000, monthly_upload_bytes: 10_000 * 1024 * 1024 });
+    expect(evaluateCheck(uploadsFull, { tier: "free", weight: 1, cost_cents_estimate: 0 })).toEqual({ ok: true });
+    for (const account_mode of ["managed", "byok"] as const) {
+      const next = applyIncrement(uploadsFull, { weight: 3, cost_microcents: 25, account_mode });
+      expect(next.monthly_uploads).toBe(uploadsFull.monthly_uploads);
+      expect(next.monthly_upload_bytes).toBe(uploadsFull.monthly_upload_bytes);
+    }
+  });
 });
 
 // W38-S938: the core scenario the fix protects — 100 tiny (~0.04¢ = 400 µ¢)
@@ -406,6 +440,8 @@ describe("emptyState", () => {
       monthly_cost_microcents: 0,
       monthly_tasks: 0,
       daily_tasks: 0,
+      monthly_uploads: 0,
+      monthly_upload_bytes: 0,
     });
   });
 });
@@ -428,6 +464,8 @@ describe("migrateState — legacy cents → micro-cents", () => {
       monthly_cost_microcents: 500_000,
       monthly_tasks: 7,
       daily_tasks: 3,
+      monthly_uploads: 0,
+      monthly_upload_bytes: 0,
     });
   });
 
@@ -438,8 +476,21 @@ describe("migrateState — legacy cents → micro-cents", () => {
       monthly_cost_microcents: 123_456,
       monthly_tasks: 7,
       daily_tasks: 3,
+      monthly_uploads: 2,
+      monthly_upload_bytes: 40 * 1024 * 1024,
     };
     expect(migrateState(current)).toEqual(current);
+  });
+
+  it("W38-S1165: a record written before the upload limit reads no uploads", () => {
+    const before = {
+      period_month: "2026-04",
+      period_day: "2026-04-28",
+      monthly_cost_microcents: 123_456,
+      monthly_tasks: 7,
+      daily_tasks: 3,
+    };
+    expect(migrateState(before)).toEqual({ ...before, monthly_uploads: 0, monthly_upload_bytes: 0 });
   });
 
   it("falls back to emptyState for null/garbage (never crashes)", () => {
@@ -459,6 +510,8 @@ describe("migrateState — legacy cents → micro-cents", () => {
       monthly_cost_microcents: 120_000,
       monthly_tasks: 0,
       daily_tasks: 0,
+      monthly_uploads: 0,
+      monthly_upload_bytes: 0,
     });
   });
 });
@@ -473,5 +526,143 @@ describe("isLegacyShape", () => {
     expect(isLegacyShape(null)).toBe(false);
     expect(isLegacyShape(undefined)).toBe(false);
     expect(isLegacyShape(7)).toBe(false);
+  });
+});
+
+// W38-S1165 (founder decision 2026-10-25, (b)): a managed device's uploads to the Anthropic Files API are limited per
+// month, by number and by total size. The values are read from UPLOAD_CAPS, so a change of the numbers moves no test
+// here.
+describe("W38-S1165 — the monthly upload limit", () => {
+  const MIB = 1024 * 1024;
+  const TIERS = ["free", "solo", "studio"] as const;
+
+  it("allows the last upload the count limit names and refuses the next, on every tier", () => {
+    for (const tier of TIERS) {
+      const cap = UPLOAD_CAPS[tier];
+      const before = stateAt({ monthly_uploads: cap.monthly_uploads - 1 });
+      expect(evaluateUpload(before, { tier, bytes: MIB })).toEqual({ ok: true });
+      const at = stateAt({ monthly_uploads: cap.monthly_uploads });
+      expect(evaluateUpload(at, { tier, bytes: MIB })).toEqual({ ok: false, reason: "monthly_uploads_exceeded" });
+    }
+  });
+
+  it("allows an upload that fills the size limit exactly and refuses one byte more", () => {
+    for (const tier of TIERS) {
+      const cap = UPLOAD_CAPS[tier];
+      const s = stateAt({ monthly_upload_bytes: cap.monthly_upload_bytes - 10 * MIB });
+      expect(evaluateUpload(s, { tier, bytes: 10 * MIB })).toEqual({ ok: true });
+      expect(evaluateUpload(s, { tier, bytes: 10 * MIB + 1 })).toEqual({
+        ok: false,
+        reason: "monthly_upload_bytes_exceeded",
+      });
+    }
+  });
+
+  it("refuses an upload whose size is not a whole number of bytes", () => {
+    for (const bytes of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(evaluateUpload(stateAt(), { tier: "solo", bytes })).toEqual({ ok: false, reason: "upload_size_unknown" });
+    }
+  });
+
+  it("each tier's size limit leaves room for its count of the smallest file the daemon uploads (over 15 MiB)", () => {
+    for (const tier of TIERS) {
+      const cap = UPLOAD_CAPS[tier];
+      expect(cap.monthly_uploads).toBeGreaterThan(0);
+      expect(cap.monthly_upload_bytes).toBeGreaterThanOrEqual(cap.monthly_uploads * 15 * MIB);
+    }
+  });
+
+  it("reserveUpload counts one upload and its bytes; releaseUpload gives them back, never below zero", () => {
+    const s = stateAt({ monthly_uploads: 3, monthly_upload_bytes: 60 * MIB });
+    const reserved = reserveUpload(s, 20 * MIB);
+    expect(reserved.monthly_uploads).toBe(4);
+    expect(reserved.monthly_upload_bytes).toBe(80 * MIB);
+    expect(s.monthly_uploads).toBe(3); // pure: input not mutated
+    const released = releaseUpload(reserved, 20 * MIB);
+    expect(released.monthly_uploads).toBe(3);
+    expect(released.monthly_upload_bytes).toBe(60 * MIB);
+    const floor = releaseUpload(stateAt(), 20 * MIB);
+    expect(floor.monthly_uploads).toBe(0);
+    expect(floor.monthly_upload_bytes).toBe(0);
+  });
+});
+
+// The store's two upload routes, driven through QuotaStoreDO.fetch over an in-memory storage. The in-memory transaction
+// runs its body directly, so this checks what each route reads and writes; it does not check two requests at once.
+describe("W38-S1165 — /upload-reserve and /upload-release on the store", () => {
+  const MIB = 1024 * 1024;
+
+  function store(initial?: unknown) {
+    const data = new Map<string, unknown>();
+    if (initial !== undefined) data.set("quota_state", initial);
+    const storage = {
+      get: async (k: string) => structuredClone(data.get(k)),
+      put: async (k: string, v: unknown) => { data.set(k, structuredClone(v)); },
+      transaction: async (fn: (txn: unknown) => Promise<void>) => fn(storage),
+      setAlarm: async (_t: number) => {},
+    };
+    const quota = new QuotaStoreDO({ storage } as unknown as DurableObjectState, {});
+    const post = (path: string, body: unknown) =>
+      quota.fetch(new Request(`https://internal${path}`, { method: "POST", body: JSON.stringify(body) }));
+    return { data, post, saved: () => data.get("quota_state") as QuotaState | undefined };
+  }
+  const month = currentPeriod().month;
+
+  it("reserve counts the upload and names the month it was counted in", async () => {
+    const q = store();
+    const r = await q.post("/upload-reserve", { tier: "free", bytes: 20 * MIB });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ ok: true, period_month: month });
+    expect(q.saved()?.monthly_uploads).toBe(1);
+    expect(q.saved()?.monthly_upload_bytes).toBe(20 * MIB);
+  });
+
+  it("reserve at the limit is refused with 429 and counts nothing", async () => {
+    const full = { ...emptyState(), monthly_uploads: UPLOAD_CAPS.free.monthly_uploads };
+    const q = store(full);
+    const r = await q.post("/upload-reserve", { tier: "free", bytes: 20 * MIB });
+    expect(r.status).toBe(429);
+    expect(await r.json()).toEqual({ ok: false, reason: "monthly_uploads_exceeded" });
+    expect(q.saved()).toEqual(full);
+  });
+
+  it("reserve of a size that is not a whole number of bytes is refused and counts nothing", async () => {
+    const q = store(emptyState());
+    const r = await q.post("/upload-reserve", { tier: "free", bytes: -1 });
+    expect(r.status).toBe(429);
+    expect(q.saved()?.monthly_uploads).toBe(0);
+  });
+
+  it("release in the month of the reservation gives it back", async () => {
+    const q = store();
+    await q.post("/upload-reserve", { tier: "solo", bytes: 30 * MIB });
+    const r = await q.post("/upload-release", { bytes: 30 * MIB, period_month: month });
+    expect(r.status).toBe(200);
+    expect(q.saved()?.monthly_uploads).toBe(0);
+    expect(q.saved()?.monthly_upload_bytes).toBe(0);
+  });
+
+  it("release of a reservation from another month leaves this month's count alone", async () => {
+    const q = store();
+    await q.post("/upload-reserve", { tier: "solo", bytes: 30 * MIB });
+    await q.post("/upload-release", { bytes: 30 * MIB, period_month: "1999-01" });
+    expect(q.saved()?.monthly_uploads).toBe(1);
+    expect(q.saved()?.monthly_upload_bytes).toBe(30 * MIB);
+  });
+
+  it("a record written before the upload limit is counted from zero", async () => {
+    const p = currentPeriod();
+    const q = store({ period_month: p.month, period_day: p.day, monthly_cost_microcents: 5, monthly_tasks: 2, daily_tasks: 1 });
+    const r = await q.post("/upload-reserve", { tier: "free", bytes: 16 * MIB });
+    expect(r.status).toBe(200);
+    expect(q.saved()).toEqual({
+      period_month: p.month,
+      period_day: p.day,
+      monthly_cost_microcents: 5,
+      monthly_tasks: 2,
+      daily_tasks: 1,
+      monthly_uploads: 1,
+      monthly_upload_bytes: 16 * MIB,
+    });
   });
 });

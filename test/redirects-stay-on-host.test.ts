@@ -3,7 +3,9 @@
  * on the same host (founder decision 2026-10-09, option (a)).
  *
  * One entry per upstream call site: all sixteen credential-carrying routes, the OAuth route twice
- * (completion and token). Each entry drives the route's real handler through the three legs in
+ * (completion and token) and the provider Files route twice (an OpenAI upload with the user's key, an
+ * Anthropic upload with the operator's, since W38-S1165 leaves a managed device only the Anthropic
+ * upload). Each entry drives the route's real handler through the three legs in
  * test/helpers/redirect-legs.ts: another host refused by name and never contacted, the same host
  * followed with the same credential, no Location refused. The three anonymous model routes keep
  * their own allowlisted hop loop and are covered by their own tests; the sandboxed-browser leg
@@ -64,7 +66,8 @@ function makeEnv(accountMode: "managed" | "byok", extra: Record<string, string> 
   return {
     AUTH_STORE: namespace(() => json({ valid: true, record, reason: null })),
     TIER_CACHE: namespace(() => json({ tier: "free" })),
-    QUOTA_STORE: namespace(() => json({ ok: true })),
+    // /check and /increment read ok; /upload-reserve (W38-S1165) also needs the month the upload is counted in.
+    QUOTA_STORE: namespace(() => json({ ok: true, period_month: "2026-10" })),
     ENROLL_KV: {} as KVNamespace,
     STRIPE_WEBHOOK_SECRET: "test_secret",
     USER_INDEX_HMAC_KEY: "test_hmac_key",
@@ -104,35 +107,42 @@ const ROUTES: Array<[string, () => RouteUnderTest]> = [
     ok: () => json({ id: "msg_1", type: "message", role: "assistant", content: [], model: "claude-haiku-4-5",
       usage: { input_tokens: 1, output_tokens: 1 } }),
   })],
-  ["chat-completions (managed)", () => ({
+  // W38-S1165: the routes below refuse a managed device (managed_not_offered), so each is driven with the user's own key.
+  ["chat-completions (byok, the user's key)", () => ({
     host: "api.openai.com",
-    invoke: () => handleChatCompletions(post("http://proxy/v1/chat/completions", {}, CHAT_BODY), makeEnv("managed"), makeCtx()),
+    invoke: () => handleChatCompletions(post("http://proxy/v1/chat/completions", { "x-bishop-upstream-key": "user-openai-key" },
+      CHAT_BODY), makeEnv("byok"), makeCtx()),
     ok: chatOk,
   })],
-  ["gemini, OpenAI shape (managed)", () => ({
+  ["gemini, OpenAI shape (byok, the user's key)", () => ({
     host: "generativelanguage.googleapis.com",
-    invoke: () => handleGemini(post("http://proxy/gemini/v1/chat/completions", {}, CHAT_BODY), makeEnv("managed"), makeCtx()),
+    invoke: () => handleGemini(post("http://proxy/gemini/v1/chat/completions", { "x-bishop-upstream-key": "user-gemini-key" },
+      CHAT_BODY), makeEnv("byok"), makeCtx()),
     ok: chatOk,
   })],
-  ["gemini native (managed)", () => ({
+  ["gemini native (byok, the user's key)", () => ({
     host: "generativelanguage.googleapis.com",
-    invoke: () => handleGeminiNative(post("http://proxy/v1beta/models/gemini-2.5-flash:generateContent", {},
-      JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] })), makeEnv("managed"), makeCtx()),
+    invoke: () => handleGeminiNative(post("http://proxy/v1beta/models/gemini-2.5-flash:generateContent",
+      { "x-bishop-upstream-key": "user-gemini-key" },
+      JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] })), makeEnv("byok"), makeCtx()),
     ok: () => json({ candidates: [], usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 } }),
   })],
-  ["grok (managed)", () => ({
+  ["grok (byok, the user's key)", () => ({
     host: "api.x.ai",
-    invoke: () => handleGrok(post("http://proxy/grok/v1/chat/completions", {}, CHAT_BODY), makeEnv("managed"), makeCtx()),
+    invoke: () => handleGrok(post("http://proxy/grok/v1/chat/completions", { "x-bishop-upstream-key": "user-xai-key" },
+      CHAT_BODY), makeEnv("byok"), makeCtx()),
     ok: chatOk,
   })],
-  ["qwen (managed)", () => ({
+  ["qwen (byok, the user's key)", () => ({
     host: "dashscope-intl.aliyuncs.com",
-    invoke: () => handleQwen(post("http://proxy/qwen/v1/chat/completions", {}, CHAT_BODY), makeEnv("managed"), makeCtx()),
+    invoke: () => handleQwen(post("http://proxy/qwen/v1/chat/completions", { "x-bishop-upstream-key": "user-qwen-key" },
+      CHAT_BODY), makeEnv("byok"), makeCtx()),
     ok: chatOk,
   })],
-  ["byok spec leg (grok, managed)", () => ({
+  ["byok spec leg (grok, the user's key)", () => ({
     host: "api.x.ai",
-    invoke: () => handleByok(post("http://proxy/byok/grok/chat/completions", {}, CHAT_BODY), makeEnv("managed"), makeCtx()),
+    invoke: () => handleByok(post("http://proxy/byok/grok/chat/completions", { "x-bishop-upstream-key": "user-xai-key" },
+      CHAT_BODY), makeEnv("byok"), makeCtx()),
     ok: chatOk,
   })],
   ["oauth completion (openai_codex, the user's access token)", () => ({
@@ -173,19 +183,30 @@ const ROUTES: Array<[string, () => RouteUnderTest]> = [
       makeEnv("managed"), makeCtx()),
     ok: () => json({ ok: true }),
   })],
-  ["provider files (OpenAI upload, a streamed body)", () => ({
+  ["provider files (OpenAI upload, a streamed body, the user's key)", () => ({
     host: "api.openai.com",
     sameHostStatus: 302,
     invoke: () => handleProviderFiles(post("http://proxy/v1/openai/files",
-      { "content-type": "multipart/form-data; boundary=--bishopBOUNDARY" }, "----bishopBOUNDARY\r\nRAW-MEDIA\r\n"),
-      makeEnv("managed"), makeCtx()),
+      { "content-type": "multipart/form-data; boundary=--bishopBOUNDARY", "x-bishop-upstream-key": "user-openai-key" },
+      "----bishopBOUNDARY\r\nRAW-MEDIA\r\n"),
+      makeEnv("byok"), makeCtx()),
     ok: () => json({ id: "file-abc" }),
   })],
-  ["gemini files (upload, a streamed body)", () => ({
+  ["provider files (Anthropic upload, a streamed body, managed, the operator key)", () => ({
+    host: "api.anthropic.com",
+    sameHostStatus: 302,
+    invoke: () => handleProviderFiles(post("http://proxy/v1/anthropic/files",
+      { "content-type": "multipart/form-data; boundary=--bishopBOUNDARY", "content-length": "31" },
+      "----bishopBOUNDARY\r\nRAW-MEDIA\r\n"),
+      makeEnv("managed"), makeCtx()),
+    ok: () => json({ id: "file_011abc" }),
+  })],
+  ["gemini files (upload, a streamed body, the user's key)", () => ({
     host: "generativelanguage.googleapis.com",
     sameHostStatus: 302,
-    invoke: () => handleGeminiFiles(post("http://proxy/v1beta/files:upload", { "content-type": "application/pdf" },
-      "RAW-MEDIA-BYTES"), makeEnv("managed"), makeCtx()),
+    invoke: () => handleGeminiFiles(post("http://proxy/v1beta/files:upload",
+      { "content-type": "application/pdf", "x-bishop-upstream-key": "user-gemini-key" },
+      "RAW-MEDIA-BYTES"), makeEnv("byok"), makeCtx()),
     ok: () => json({ file: { uri: "https://x/files/abc", name: "files/abc" } }),
   })],
   ["azure (per-account resource, the user's api-key)", () => ({

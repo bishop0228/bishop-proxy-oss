@@ -5,10 +5,12 @@
  * classify → entitlement-gate → forward) but per-leg constants are read from
  * BYOK_UPSTREAM_SPECS keyed by the path segment at position [2].
  *
- * Entitlement gate: managed → operator key from env[spec.operatorKeyVar] (fail
- * closed with managed_key_unavailable if absent — never reads the inbound
- * header); byok → x-bishop-upstream-key (byok_key_missing if absent).
- * rebuildByokHeaders strips all client identifiers (Pillar 1).
+ * Entitlement gate: a managed device is refused right after its token is
+ * verified (403 managed_not_offered, W38-S1165: its included models are
+ * Anthropic's, on /v1/messages), so this route spends only
+ * x-bishop-upstream-key (byok_key_missing if absent), whatever
+ * env[spec.operatorKeyVar] holds. rebuildByokHeaders strips all client
+ * identifiers (Pillar 1).
  *
  * Audit emits: seg + key_name (env var name, never the value) + event_type +
  * status_code ONLY — key value is never recorded.
@@ -20,6 +22,7 @@
 import type { Env } from "../index";
 import { envVar } from "../lib/env-var";
 import { resolveUpstreamKey, rebuildByokHeaders } from "../lib/headers";
+import { isManaged, MANAGED_NOT_OFFERED } from "../lib/managed-scope";
 import { classify } from "../lib/classifier";
 import { BYOK_UPSTREAM_SPECS, resolveByokUpstreamHost } from "../lib/byok-specs";
 import type { AuthRecord } from "../durable-objects/auth-store";
@@ -90,6 +93,13 @@ export async function handleByok(
   const record = verify.record;
   const tokenId = record.token_id;
 
+  // W38-S1165 (founder decision 2026-10-25, (b)): a managed device's included models are Anthropic's, on
+  // /v1/messages; this route serves only a device's own key, whatever operator keys the Worker binds.
+  if (isManaged(record.account_mode)) {
+    emitError(requestId, ip, requestSize, 403, MANAGED_NOT_OFFERED, startedAt, tokenId);
+    return jsonError(403, MANAGED_NOT_OFFERED);
+  }
+
   // Step 3 — tier-cache read keyed by token_id.
   const tier = await readTier(env, tokenId);
 
@@ -141,7 +151,7 @@ export async function handleByok(
   const gateResponse = classificationGate(cls, requestId, tokenId, ip, requestSize, startedAt);
   if (gateResponse) return gateResponse;
 
-  // Step 6 — entitlement gate (fail-closed). Managed → operator key from env[spec.operatorKeyVar].
+  // Step 6 — entitlement gate (fail-closed): the user key; a managed device was refused above (W38-S1165).
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
   const operatorKey = envVar(env, spec.operatorKeyVar) ?? null;
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, operatorKey);

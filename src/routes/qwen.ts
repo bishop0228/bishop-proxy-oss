@@ -7,14 +7,16 @@
  * is checked at a flat weight of 1. The upstream host is derived from the route
  * (frozen allowlist), never from the request, preserving the single-seal §3.2.
  *
- * Entitlement gate: managed → operator QWEN_API_KEY (fail closed with
- * managed_key_unavailable if absent — never reads the inbound header); byok →
- * the user key (byok_key_missing if absent). rebuildOpenAIHeaders strips all
- * client identifiers (Pillar 1).
+ * Entitlement gate: a managed device is refused right after its token is
+ * verified (403 managed_not_offered, W38-S1165: its included models are
+ * Anthropic's, on /v1/messages), so this route spends only the user key
+ * (byok_key_missing if absent), whatever operator key the Worker binds.
+ * rebuildOpenAIHeaders strips all client identifiers (Pillar 1).
  */
 
 import type { Env } from "../index";
 import { resolveUpstreamKey, rebuildOpenAIHeaders } from "../lib/headers";
+import { isManaged, MANAGED_NOT_OFFERED } from "../lib/managed-scope";
 import { classify } from "../lib/classifier";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
@@ -74,6 +76,13 @@ export async function handleQwen(
   const record = verify.record;
   const tokenId = record.token_id;
 
+  // W38-S1165 (founder decision 2026-10-25, (b)): a managed device's included models are Anthropic's, on
+  // /v1/messages; this route serves only a device's own key, whatever operator keys the Worker binds.
+  if (isManaged(record.account_mode)) {
+    emitError(requestId, ip, requestSize, 403, MANAGED_NOT_OFFERED, startedAt, tokenId);
+    return jsonError(403, MANAGED_NOT_OFFERED);
+  }
+
   // Step 3 — tier-cache read keyed by token_id.
   const tier = await readTier(env, tokenId);
 
@@ -126,7 +135,7 @@ export async function handleQwen(
   const gateResponse = classificationGate(cls, requestId, tokenId, ip, requestSize, startedAt);
   if (gateResponse) return gateResponse;
 
-  // Step 6 — entitlement gate (fail-closed). Managed → operator QWEN_API_KEY.
+  // Step 6 — entitlement gate (fail-closed): the user key; a managed device was refused above (W38-S1165).
   const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, env.QWEN_API_KEY ?? null);
   if (!keyResolution.ok) {

@@ -15,9 +15,12 @@
  *
  * Same choke sequence + single-seal §3.2 posture as the Gemini route: host FROZEN
  * server-side (api.openai.com / api.anthropic.com, both already allowlisted), never
- * request-derived; operator key substituted (managed → operator OPENAI/ANTHROPIC key,
- * fail-closed managed_key_unavailable; byok → the user's x-bishop-upstream-key); the
- * inbound daemon Bearer never leaks (Pillar 1). The multipart body is forwarded verbatim
+ * request-derived; the upstream key is the operator's Anthropic key for a managed
+ * Anthropic upload (fail-closed managed_key_unavailable) and otherwise the user's
+ * x-bishop-upstream-key; a managed device is refused on the OpenAI leg (403
+ * managed_not_offered, W38-S1165) and a managed upload is counted against the device's
+ * monthly upload limit (UPLOAD_CAPS) before it is forwarded; the inbound daemon Bearer
+ * never leaks (Pillar 1). The multipart body is forwarded verbatim
  * — no JSON parse, no classifier on raw bytes (the file's text floor is classified on
  * the completion leg; the binary upload is transparency-tagged via the daemon's dynamic
  * retention tag — never silently blocked).
@@ -30,6 +33,7 @@
 
 import type { Env } from "../index";
 import { resolveUpstreamKey, rebuildHeaders, rebuildOpenAIHeaders } from "../lib/headers";
+import { isManaged, servedMode, MANAGED_NOT_OFFERED } from "../lib/managed-scope";
 import type { AuthRecord } from "../durable-objects/auth-store";
 import {
   ip24From,
@@ -120,8 +124,22 @@ export async function handleProviderFiles(
   const record = verify.record;
   const tokenId = record.token_id;
 
+  // W38-S1165 (founder decision 2026-10-25, (b)): a managed device's included models are Anthropic's; it may upload a
+  // file for them (/v1/anthropic/files), and the OpenAI leg serves only a device's own key.
+  if (provider === "openai" && isManaged(record.account_mode)) {
+    emitError(requestId, ip, requestSize, 403, MANAGED_NOT_OFFERED, startedAt, tokenId);
+    return jsonError(403, MANAGED_NOT_OFFERED);
+  }
+
   // Step 3 — tier.
   const tier = await readTier(env, tokenId);
+
+  // W38-S1168 (founder decision 2026-10-25, (a)): on the Anthropic leg, a paying device's upload that names no key of
+  // its own is for its included models, as on /v1/messages; the OpenAI leg reads the record as it stands.
+  const accountMode =
+    provider === "anthropic"
+      ? servedMode(record.account_mode, tier, request.headers)
+      : ((record.account_mode ?? "managed") as "managed" | "byok");
 
   // Step 4 — quota /check (flat weight).
   const quotaStub = env.QUOTA_STORE.get(env.QUOTA_STORE.idFromName(tokenId));
@@ -132,7 +150,7 @@ export async function handleProviderFiles(
       tier,
       weight: 1,
       cost_cents_estimate: 0,
-      account_mode: record.account_mode ?? "managed",
+      account_mode: accountMode,
     }),
   });
   if (checkResp.status === 429) {
@@ -151,8 +169,8 @@ export async function handleProviderFiles(
     );
   }
 
-  // Step 5 — entitlement gate (fail-closed). Operator key per provider.
-  const accountMode = (record.account_mode ?? "managed") as "managed" | "byok";
+  // Step 5 — entitlement gate (fail-closed). Only a managed Anthropic upload reaches the operator key: a managed device
+  // was refused on the OpenAI leg above (W38-S1165).
   const operatorKey = provider === "openai" ? (env.OPENAI_API_KEY ?? null) : env.ANTHROPIC_API_KEY;
   const keyResolution = resolveUpstreamKey(accountMode, request.headers, operatorKey);
   if (!keyResolution.ok) {
@@ -174,6 +192,7 @@ export async function handleProviderFiles(
   let upstreamUrl: string;
   let method: string;
   let body: BodyInit | null = null;
+  let reservedPeriod: string | null = null;
   if (isDelete) {
     const m = deleteRe.exec(url.pathname);
     if (!m) {
@@ -189,12 +208,56 @@ export async function handleProviderFiles(
       emitError(requestId, ip, requestSize, 413, "upload_too_large", startedAt, tokenId);
       return jsonError(413, "upload_too_large");
     }
+    // W38-S1165 (founder decision 2026-10-25, (b), with a per-device upload limit): a managed upload is counted against
+    // the device's monthly UPLOAD_CAPS before it is forwarded, so it must say its size.
+    if (isManaged(accountMode)) {
+      if (!request.headers.get("content-length")) {
+        emitError(requestId, ip, requestSize, 411, "length_required", startedAt, tokenId);
+        return jsonError(411, "length_required");
+      }
+      const reserve = await quotaStub.fetch("https://internal/upload-reserve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier, bytes: requestSize }),
+      });
+      const rr = (await reserve.json()) as { ok?: boolean; reason?: string; period_month?: string };
+      if (reserve.status !== 200 || !rr.ok || !rr.period_month) {
+        const reason = rr.reason ?? "upload_limit_reached";
+        emitError(requestId, ip, requestSize, 429, reason, startedAt, tokenId);
+        return new Response(JSON.stringify({ error: "upload_limit_reached", reason }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      reservedPeriod = rr.period_month;
+    }
     upstreamUrl = uploadUrl;
     method = "POST";
     body = request.body;
   }
 
-  const upstream = await fetchWithRetry(upstreamUrl, { method, headers: upstreamHeaders, body });
+  // An upload the provider did not take is not counted (W38-S1165): given back when the provider refuses it, and when
+  // the forward throws (a 5xx retry resends a body already read, which throws).
+  const release = async (): Promise<void> => {
+    if (reservedPeriod === null) return;
+    try {
+      await quotaStub.fetch("https://internal/upload-release", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bytes: requestSize, period_month: reservedPeriod }),
+      });
+    } catch {
+      // best-effort: a release that fails leaves the upload counted, the safe side.
+    }
+  };
+  let upstream: Response;
+  try {
+    upstream = await fetchWithRetry(upstreamUrl, { method, headers: upstreamHeaders, body });
+  } catch (err) {
+    await release();
+    throw err;
+  }
+  if (!upstream.ok) await release();
 
   emitResponse({
     request_id: requestId,
