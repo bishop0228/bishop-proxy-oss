@@ -197,10 +197,16 @@ describe("no route opts out of the policy", () => {
   const files = readdirSync(routesDir).filter((f) => f.endsWith(".ts"));
   /** The anonymous model routes run their own allowlisted manual-redirect loop; nothing else may. */
   const OWN_REDIRECT_LOOP = new Set(["model-registry.ts", "model-hf.ts", "model-list.ts"]);
+  /** browser-egress follows no redirect at all: it returns every 3xx to the guest's browser, which asks again through
+   *  the relay, each hop through the route's own gates (W38-S1283 (4)). It sends no credential. */
+  const RETURNS_EVERY_REDIRECT = "browser-egress.ts";
 
-  it("only the three anonymous model routes set a redirect mode", () => {
-    const offenders = files.filter((f) => !OWN_REDIRECT_LOOP.has(f) && /\bredirect\s*:/.test(read(f)));
+  it("only the three anonymous model routes set a redirect mode, and browser-egress sets only \"manual\"", () => {
+    const offenders = files.filter((f) =>
+      !OWN_REDIRECT_LOOP.has(f) && f !== RETURNS_EVERY_REDIRECT && /\bredirect\s*:/.test(read(f)));
     expect(offenders).toEqual([]);
+    const modes = [...read(RETURNS_EVERY_REDIRECT).matchAll(/\bredirect\s*:\s*([^,}\n]+)/g)].map((m) => m[1].trim());
+    expect(modes).toEqual(['"manual"']);
   });
 
   it("no route calls the global fetch directly: upstream calls go through fetchWithRetry", () => {

@@ -27,14 +27,31 @@
  *
  *   1. target derive — the daemon relay supplies the request-determined target
  *      URL in X-Bishop-Browser-Target (missing → 400, NO forward).
+ *   1b. the browser's own request (W38-S1283 (4)) — its method rides
+ *      X-Bishop-Egress-Method (missing or not one of the methods a browser
+ *      sends → 400, NO forward), each of its headers rides
+ *      X-Bishop-Browser-Header-<name>, and its body is the request body. The
+ *      relay used to POST the browser's raw request bytes as the body, which
+ *      this route forwarded with the relay's own method and headers: every GET
+ *      reached the site as a POST of an HTTP request.
  *   2. Bearer parse + AuthStoreDO /verify-token (mirror /egress).
  *   3. SSRF gate the target — non-public/internal → 400, NO forward (fail-closed).
  *   4. flat-weight quota /check (abuse-bound, weight 1, cost 0 — operational, not
  *      inference).
  *   5. forward via the rawBrowserEgressFetch() seam (the sanctioned, SSRF-gated
  *      bypass of the static-host interceptor — leg 4 only) to the target URL,
- *      with the Bishop auth + ALL X-Bishop-* control headers STRIPPED.
+ *      with the browser's method, its own headers only (never the Bishop auth,
+ *      an X-Bishop-* header or the relay hop's headers) and its body; redirect
+ *      "manual", so a 3xx goes back to the browser, which follows it through the
+ *      relay itself: every hop then passes this route's gates, and the Worker
+ *      never follows a host unseen.
+ *   5b. a forward that throws → 502 upstream_fetch_failed, naming no cause (the
+ *      runtime's message names none); a 525 or 526 answer, Cloudflare's when the
+ *      TLS connection to the site failed → 502 upstream_tls_failed. Every other
+ *      answer, any other 5xx included, is the site's and passes back.
  *   6. emitResponse — metadata-only ProxyLogEvent (no body, no host-content).
+ *   7. the answer goes back with its headers (Set-Cookie and Location among
+ *      them), less the hop-by-hop ones and the encoding the runtime has undone.
  */
 
 import type { Env } from "../index";
@@ -131,19 +148,46 @@ export function isPublicHttpUrl(target: string): SsrfVerdict {
   return { ok: true, reason: "", host: bare };
 }
 
+/** The methods a browser sends that this route carries (W38-S1283 (4)); CONNECT and TRACE are not among them. */
+const BROWSER_METHODS = new Set(["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]);
+
+/** Headers a proxy never forwards (RFC 9110 §7.6.1), with those the forward recomputes. */
+const HOP_BY_HOP = new Set([
+  "connection", "keep-alive", "proxy-connection", "proxy-authorization", "proxy-authenticate", "te", "trailer",
+  "transfer-encoding", "upgrade", "host", "content-length", "expect",
+]);
+
+const BROWSER_HEADER_PREFIX = "x-bishop-browser-header-";
+
 /**
- * Rebuild forward headers. STRIP (Pillar 1): the daemon Bearer, every
- * x-bishop-* control header (incl. X-Bishop-Browser-Target), and the hop-by-hop
- * host/content-length. Everything else survives byte-for-byte.
+ * The browser's own headers, from the X-Bishop-Browser-Header-<name> fields the relay sends (W38-S1283 (4)). ONLY
+ * those reach the site (Pillar 1): never the daemon Bearer, an X-Bishop-* control header or the relay hop's own
+ * headers; a field naming a hop-by-hop header or an X-Bishop-* name is dropped too.
  */
 function rebuildBrowserHeaders(incoming: Headers): Headers {
   const out = new Headers();
   for (const [k, v] of incoming.entries()) {
     const lk = k.toLowerCase();
-    if (lk === "authorization") continue; // daemon Bearer — never forwarded
-    if (lk.startsWith("x-bishop-")) continue; // ALL Bishop control headers stripped
-    if (lk === "host" || lk === "content-length") continue; // recomputed by fetch
-    out.set(k, v);
+    if (!lk.startsWith(BROWSER_HEADER_PREFIX)) continue;
+    const name = lk.slice(BROWSER_HEADER_PREFIX.length);
+    if (!name || HOP_BY_HOP.has(name) || name.startsWith("x-bishop-")) continue;
+    out.append(name, v);
+  }
+  return out;
+}
+
+/**
+ * The site's answer headers for the browser: all of them, Set-Cookie and Location among them, less the hop-by-hop
+ * ones and the encoding headers (the runtime hands back the decoded body and recomputes its length). Iterating a
+ * Headers yields each Set-Cookie on its own (the Fetch standard; measured in workerd and Node, 2026-11-06), so each
+ * is appended as it came.
+ */
+function answerHeaders(upstream: Headers): Headers {
+  const out = new Headers();
+  for (const [k, v] of upstream.entries()) {
+    const lk = k.toLowerCase();
+    if (HOP_BY_HOP.has(lk) || lk === "content-encoding" || lk === "content-length") continue;
+    out.append(k, v);
   }
   return out;
 }
@@ -164,6 +208,13 @@ export async function handleBrowserEgress(
   if (!target) {
     emitError(requestId, ip, requestSize, 400, "browser_egress_target_missing", startedAt);
     return jsonError(400, "browser_egress_target_missing");
+  }
+
+  // Step 1b — the browser's own method (W38-S1283 (4)); missing or not one a browser sends → 400, NO forward.
+  const method = (request.headers.get("x-bishop-egress-method") ?? "").trim().toUpperCase();
+  if (!BROWSER_METHODS.has(method)) {
+    emitError(requestId, ip, requestSize, 400, "browser_egress_method_invalid", startedAt);
+    return jsonError(400, "browser_egress_method_invalid");
   }
 
   // Step 2 — Bearer parse.
@@ -228,15 +279,39 @@ export async function handleBrowserEgress(
 
   // Step 5 — forward to the request-determined PUBLIC target via the sanctioned
   // SSRF-gated raw-fetch seam (the ONE bypass of the static-host interceptor,
-  // leg 4 only). The body is buffered opaquely; the Bishop auth + control
-  // headers are stripped (Pillar 1).
+  // leg 4 only), as the browser made it: its method, its own headers only
+  // (Pillar 1) and its body. redirect "manual": a 3xx goes back to the browser.
   const rawBody = await request.arrayBuffer();
+  const bodyless = method === "GET" || method === "HEAD";
   const forwardFetch = rawBrowserEgressFetch();
-  const upstream = await forwardFetch(target, {
-    method: request.method,
+  const init: RequestInit = {
+    method,
     headers: rebuildBrowserHeaders(request.headers),
-    body: rawBody.byteLength > 0 ? rawBody : undefined,
-  });
+    body: !bodyless && rawBody.byteLength > 0 ? rawBody : undefined,
+    redirect: "manual",
+  };
+  // Step 5b — only the fetch is caught, so a fault in this route's own code still surfaces as one. A fetch that
+  // throws never reached the site, whatever the cause, and the runtime's message ("internal error; reference = ..."
+  // for a refused certificate and a failed DNS lookup alike) names none: a named 502 that claims no cause and
+  // carries none of that text (the architect window's ruling, 2026-11-06).
+  let upstream: Response;
+  try {
+    upstream = await forwardFetch(target, init);
+  } catch {
+    emitError(requestId, ip, requestSize, 502, "upstream_fetch_failed", startedAt, tokenId);
+    return jsonError(502, "upstream_fetch_failed", { message: "the site could not be reached" });
+  }
+  // A 525 or 526 is Cloudflare's answer when the TLS connection to the site failed: the handshake, or the certificate
+  // under the Full (strict) check a Worker's subrequest outside its zone always gets (Cloudflare's error-526 page, its
+  // Workers section). A named 502 the guest can show as a certificate error. Every other answer, any other 5xx
+  // included, is the site's and passes back below.
+  if (upstream.status === 525 || upstream.status === 526) {
+    emitError(requestId, ip, requestSize, 502, "upstream_tls_failed", startedAt, tokenId);
+    return jsonError(502, "upstream_tls_failed", {
+      message: "the site's TLS connection failed",
+      upstream_status: upstream.status,
+    });
+  }
 
   // Step 6 — metadata-only audit (Pillar 1 — no token, no body, no host-content).
   // The destination host is proxy-OBSERVED (the forward above went to it); the
@@ -259,12 +334,10 @@ export async function handleBrowserEgress(
     upstream_status: upstream.status,
   });
 
-  // Stream the upstream response straight back (status + content-type preserved).
-  const respHeaders = new Headers();
-  const ct = upstream.headers.get("content-type");
-  if (ct) respHeaders.set("content-type", ct);
+  // Step 7 — stream the upstream response straight back: its status and its headers, less the hop-by-hop ones and
+  // the encoding the runtime has undone (W38-S1283 (4); before, only Content-Type came back).
   return new Response(upstream.body, {
     status: upstream.status,
-    headers: respHeaders,
+    headers: answerHeaders(upstream.headers),
   });
 }

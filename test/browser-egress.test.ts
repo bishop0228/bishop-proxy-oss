@@ -20,6 +20,17 @@
  *   (6) ★ host-observed-body-never-logged — the forward reaches the observed
  *       host, and the emitted ProxyLogEvent carries NO body/prompt/header (§3.3).
  *   (7) quota — a quota /check 429 → 429 quota_exceeded passthrough; NO forward.
+ *   (8) ★ the browser's request replayed (W38-S1283 (4)) — its method, its own
+ *       headers (X-Bishop-Browser-Header-*) and its body reach the site; a GET
+ *       carries no body; redirect "manual".
+ *   (9) ★ method-invalid — a missing method, CONNECT or TRACE → 400, NO forward.
+ *  (10) ★ the answer's headers — Location and each Set-Cookie come back, less the
+ *       hop-by-hop and encoding headers; a 3xx is returned, never followed.
+ *  (11) ★ tls — a 525 or 526 answer to the forward → 502 upstream_tls_failed.
+ *  (12) ★ fetch-failed — a forward that throws → 502 upstream_fetch_failed,
+ *       naming no cause and none of the runtime's text.
+ *  (13) ★ other answers — a site's 503 passes back unchanged; a 200 control.
+ *  (14) ★ own fault — a fault before the forward surfaces as itself.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -124,19 +135,28 @@ function makeEnv(opts: { authValid?: boolean; quotaStatus?: 200 | 429 } = {}): E
 function browserReq(opts: {
   target?: string | null;
   bearer?: string | null;
+  method?: string | null;
+  browserHeaders?: Record<string, string>;
   extraHeaders?: Record<string, string>;
   body?: string;
 } = {}): Request {
-  const headers: Record<string, string> = { "content-type": "application/octet-stream" };
+  // The relay's hop: its own headers, the browser's method and headers as fields, the browser's body (W38-S1283 (4)).
+  const headers: Record<string, string> = {
+    "content-type": "application/octet-stream",
+    "user-agent": "bishop-daemon/0.1.0",
+  };
   const bearer = opts.bearer === undefined ? DAEMON_BEARER : opts.bearer;
   if (bearer !== null) headers["authorization"] = `Bearer ${bearer}`;
   const target = opts.target === undefined ? PUBLIC_TARGET : opts.target;
   if (target !== null) headers["x-bishop-browser-target"] = target;
+  const method = opts.method === undefined ? "GET" : opts.method;
+  if (method !== null) headers["x-bishop-egress-method"] = method;
+  for (const [k, v] of Object.entries(opts.browserHeaders ?? {})) headers[`x-bishop-browser-header-${k}`] = v;
   Object.assign(headers, opts.extraHeaders ?? {});
   return new Request("http://proxy/browser-egress", {
     method: "POST",
     headers,
-    body: opts.body ?? "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    body: opts.body ?? "",
   });
 }
 
@@ -191,6 +211,9 @@ describe("S5c-3b isPublicHttpUrl SSRF gate", () => {
 interface Capture {
   url: string;
   headers: Headers;
+  method: string;
+  redirect: string | undefined;
+  body: string | null;
 }
 
 describe("S5c-3b /browser-egress route", () => {
@@ -204,7 +227,8 @@ describe("S5c-3b /browser-egress route", () => {
     mockFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input instanceof Request ? input.url : String(input);
       const headers = input instanceof Request ? input.headers : new Headers(init?.headers);
-      captures.push({ url, headers });
+      const body = init?.body ? new TextDecoder().decode(init.body as ArrayBuffer) : null;
+      captures.push({ url, headers, method: String(init?.method ?? "GET"), redirect: init?.redirect, body });
       return responder(captures.length - 1, url);
     });
     vi.stubGlobal("fetch", mockFetch);
@@ -290,14 +314,19 @@ describe("S5c-3b /browser-egress route", () => {
   });
 
   // ── Probe 5: ★ header-strip ──────────────────────────────────────────────
-  it("★ header-strip: daemon Bearer + ALL X-Bishop-* (incl. target) stripped; non-Bishop survives", async () => {
+  it("★ header-strip: only the browser's own headers reach the site; never the Bearer, an X-Bishop-* header or the relay hop's", async () => {
     installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
 
     const resp = await handleBrowserEgress(
       browserReq({
+        browserHeaders: {
+          "x-api-key": "browser-site-key", // the browser's own — survives
+          "x-bishop-run-id": "run-123", // a field naming a Bishop header — dropped
+          connection: "keep-alive", // hop-by-hop — dropped
+        },
         extraHeaders: {
           "x-bishop-run-id": "run-123", // control header — must be stripped
-          "x-api-key": "worker-upstream-secret", // non-Bishop — must survive
+          "x-relay-own": "relay-hop", // the relay hop's own header — not the browser's, never forwarded
         },
       }),
       makeEnv(),
@@ -309,8 +338,124 @@ describe("S5c-3b /browser-egress route", () => {
     const fwd = captures[0].headers;
     expect(fwd.get("authorization")).toBeNull(); // Bishop Bearer never forwarded
     expect(fwd.get("x-bishop-browser-target")).toBeNull(); // the control target header stripped
+    expect(fwd.get("x-bishop-egress-method")).toBeNull();
     expect(fwd.get("x-bishop-run-id")).toBeNull();
-    expect(fwd.get("x-api-key")).toBe("worker-upstream-secret"); // worker's own upstream auth survives
+    expect(fwd.get("connection")).toBeNull();
+    expect(fwd.get("x-relay-own")).toBeNull();
+    expect(fwd.get("user-agent")).toBeNull(); // the relay's agent is not the browser's
+    expect(fwd.get("x-api-key")).toBe("browser-site-key"); // the browser's own header survives
+    expect([...fwd.keys()].some((k) => k.startsWith("x-bishop-"))).toBe(false);
+  });
+
+  // ── Probe 8: ★ the browser's request replayed (W38-S1283 (4)) ────────────
+  it("★ replay: the browser's method, headers and body reach the site; a GET carries no body; redirect manual", async () => {
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+
+    const post = await handleBrowserEgress(
+      browserReq({ method: "POST", body: "a=1&b=2", browserHeaders: {
+        "content-type": "application/x-www-form-urlencoded", cookie: "s=1; t=2", "user-agent": "Mozilla/5.0 Chromium",
+      } }),
+      makeEnv(),
+      makeCtx(),
+    );
+    expect(post.status).toBe(200);
+    expect(captures[0].method).toBe("POST");
+    expect(captures[0].body).toBe("a=1&b=2");
+    expect(captures[0].redirect).toBe("manual");
+    expect(captures[0].headers.get("content-type")).toBe("application/x-www-form-urlencoded");
+    expect(captures[0].headers.get("cookie")).toBe("s=1; t=2");
+    expect(captures[0].headers.get("user-agent")).toBe("Mozilla/5.0 Chromium");
+
+    const get = await handleBrowserEgress(browserReq({ method: "get", body: "ignored" }), makeEnv(), makeCtx());
+    expect(get.status).toBe(200);
+    expect(captures[1].method).toBe("GET");
+    expect(captures[1].body).toBeNull();
+  });
+
+  // ── Probe 9: ★ method-invalid ──────────────────────────────────────────────
+  it("★ method-invalid: a missing method, CONNECT or TRACE → 400 browser_egress_method_invalid, NO forward", async () => {
+    installFetch(() => new Response("nope", { status: 200 }));
+
+    for (const method of [null, "", "CONNECT", "TRACE", "BREW"]) {
+      const resp = await handleBrowserEgress(browserReq({ method }), makeEnv(), makeCtx());
+      expect(resp.status, `${method} must be 400`).toBe(400);
+      expect(((await resp.json()) as { error: string }).error).toBe("browser_egress_method_invalid");
+    }
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // ── Probe 10: ★ the answer's headers ─────────────────────────────────────
+  it("★ answer: a 3xx comes back with Location and each Set-Cookie, less hop-by-hop and encoding headers", async () => {
+    installFetch(() => {
+      const h = new Headers({ location: "https://example.com/next", connection: "keep-alive",
+        "content-encoding": "gzip", "cache-control": "no-store", "content-type": "text/html" });
+      h.append("set-cookie", "a=1; Path=/");
+      h.append("set-cookie", "b=2; Path=/; HttpOnly");
+      return new Response(null, { status: 302, headers: h });
+    });
+
+    const resp = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+    expect(resp.status).toBe(302);
+    expect(mockFetch).toHaveBeenCalledOnce(); // returned to the browser, not followed
+    expect(resp.headers.get("location")).toBe("https://example.com/next");
+    expect(resp.headers.get("cache-control")).toBe("no-store");
+    expect(resp.headers.get("connection")).toBeNull();
+    expect(resp.headers.get("content-encoding")).toBeNull();
+    const cookies = (resp.headers as Headers & { getSetCookie: () => string[] }).getSetCookie();
+    expect(cookies).toEqual(["a=1; Path=/", "b=2; Path=/; HttpOnly"]);
+  });
+
+  // ── Probe 11: ★ a TLS failure reaching the site (W38-S1283) ────────────────
+  it("★ tls: a 525 or 526 answer to the forward → 502 upstream_tls_failed, naming Cloudflare's status", async () => {
+    const statuses = [526, 525];
+    installFetch((call) =>
+      new Response("<html>an error page</html>", { status: statuses[call], headers: { "content-type": "text/html" } }),
+    );
+    for (const status of statuses) {
+      const resp = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+      expect(resp.status, `${status} must become 502`).toBe(502);
+      expect(await resp.json()).toEqual({
+        error: "upstream_tls_failed", message: "the site's TLS connection failed", upstream_status: status,
+      });
+    }
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  // ── Probe 12: ★ a forward that throws ─────────────────────────────────────
+  it("★ fetch-failed: a forward that throws → 502 upstream_fetch_failed, naming no cause and none of the runtime's text", async () => {
+    installFetch(() => {
+      throw new Error("internal error; reference = 4u69l3nkp73o8c2srrqapjpo"); // workerd's, measured 2026-11-06
+    });
+    const resp = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+    expect(resp.status).toBe(502);
+    const text = await resp.text();
+    expect(JSON.parse(text)).toEqual({ error: "upstream_fetch_failed", message: "the site could not be reached" });
+    expect(text).not.toMatch(/internal error|reference|4u69l3nk/);
+  });
+
+  // ── Probe 13: ★ every other answer is the site's ──────────────────────────
+  it("★ other answers: a site's 503 passes back unchanged, and a 200 (the control)", async () => {
+    const answers = [
+      () => new Response("down for maintenance", { status: 503, headers: { "retry-after": "120" } }),
+      () => new Response("fine", { status: 200, headers: { "content-type": "text/plain" } }),
+    ];
+    installFetch((call) => answers[call]());
+    const down = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+    expect(down.status).toBe(503);
+    expect(await down.text()).toBe("down for maintenance");
+    expect(down.headers.get("retry-after")).toBe("120");
+    const fine = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+    expect(fine.status).toBe(200);
+    expect(await fine.text()).toBe("fine");
+  });
+
+  // ── Probe 14: ★ the route's own fault is not the site's ───────────────────
+  it("★ own fault: a fault before the forward (a request body already read) surfaces as itself, not as upstream_fetch_failed", async () => {
+    installFetch(() => new Response("never", { status: 200 }));
+    const req = browserReq({ method: "POST", body: "a=1" });
+    await req.arrayBuffer(); // the body is spent, so the route's own read of it fails
+    await expect(handleBrowserEgress(req, makeEnv(), makeCtx())).rejects.toThrow();
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   // ── Probe 6: ★ host-observed, body-never-logged (§3.3) ───────────────────
