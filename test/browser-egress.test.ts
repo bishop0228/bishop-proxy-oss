@@ -139,15 +139,20 @@ function browserReq(opts: {
   target?: string | null;
   bearer?: string | null;
   method?: string | null;
+  hopMethod?: string;
   browserHeaders?: Record<string, string>;
   extraHeaders?: Record<string, string>;
   body?: string;
 } = {}): Request {
   // The relay's hop: its own headers, the browser's method and headers as fields, the browser's body (W38-S1283 (4)).
+  // The egress clerk makes the hop with the browser's own method (the architect window's ruling of 2026-11-06), a GET
+  // or HEAD with no body and no Content-Type; a POST, as the clerk made every hop before, unless hopMethod names one.
+  const hopMethod = opts.hopMethod ?? "POST";
+  const bodyless = hopMethod === "GET" || hopMethod === "HEAD";
   const headers: Record<string, string> = {
-    "content-type": "application/octet-stream",
     "user-agent": "bishop-daemon/0.1.0",
   };
+  if (!bodyless) headers["content-type"] = "application/octet-stream";
   const bearer = opts.bearer === undefined ? DAEMON_BEARER : opts.bearer;
   if (bearer !== null) headers["authorization"] = `Bearer ${bearer}`;
   const target = opts.target === undefined ? PUBLIC_TARGET : opts.target;
@@ -157,9 +162,9 @@ function browserReq(opts: {
   for (const [k, v] of Object.entries(opts.browserHeaders ?? {})) headers[`x-bishop-browser-header-${k}`] = v;
   Object.assign(headers, opts.extraHeaders ?? {});
   return new Request("http://proxy/browser-egress", {
-    method: "POST",
+    method: hopMethod,
     headers,
-    body: opts.body ?? "",
+    body: bodyless ? undefined : opts.body ?? "",
   });
 }
 
@@ -380,6 +385,25 @@ describe("S5c-3b /browser-egress route", () => {
     expect(get.status).toBe(200);
     expect(captures[1].method).toBe("GET");
     expect(captures[1].body).toBeNull();
+  });
+
+  it("★ hop method: a hop made with the browser's own method is replayed by the field, as a POST hop is", async () => {
+    // The egress clerk's hop carries the browser's method since the architect window's ruling of 2026-11-06, so that a
+    // route forwarding the hop's own method (main's, before this branch) sends the site the browser's; this route
+    // reads X-Bishop-Egress-Method, whatever the hop's.
+    installFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
+    const cases: [string, string | undefined][] = [
+      ["GET", undefined], ["HEAD", undefined], ["DELETE", undefined], ["OPTIONS", undefined],
+      ["POST", "a=1"], ["PUT", "a=1"], ["PATCH", "a=1"],
+    ];
+    for (const [method, body] of cases) {
+      const resp = await handleBrowserEgress(browserReq({ method, hopMethod: method, body }), makeEnv(), makeCtx());
+      expect(resp.status).toBe(200);
+      const sent = captures[captures.length - 1];
+      expect(sent.method).toBe(method);
+      expect(sent.body).toBe(body ?? null);
+    }
+    expect(captures).toHaveLength(cases.length);
   });
 
   // ── Probe 9: ★ method-invalid ──────────────────────────────────────────────
