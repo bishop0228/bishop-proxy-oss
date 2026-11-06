@@ -50,8 +50,11 @@
  *      TLS connection to the site failed → 502 upstream_tls_failed. Every other
  *      answer, any other 5xx included, is the site's and passes back.
  *   6. emitResponse — metadata-only ProxyLogEvent (no body, no host-content).
- *   7. the answer goes back with its headers (Set-Cookie and Location among
- *      them), less the hop-by-hop ones and the encoding the runtime has undone.
+ *   7. the answer goes back with the site's headers (Set-Cookie and Location
+ *      among them, less the hop-by-hop ones and the encoding the runtime has
+ *      undone) in the one header the egress clerk unwraps, so a header
+ *      Cloudflare's edge adds to this answer never reaches the browser as the
+ *      site's; over the daemon's caps → 502 upstream_headers_too_large.
  */
 
 import type { Env } from "../index";
@@ -177,19 +180,36 @@ function rebuildBrowserHeaders(incoming: Headers): Headers {
 }
 
 /**
- * The site's answer headers for the browser: all of them, Set-Cookie and Location among them, less the hop-by-hop
- * ones and the encoding headers (the runtime hands back the decoded body and recomputes its length). Iterating a
- * Headers yields each Set-Cookie on its own (the Fetch standard; measured in workerd and Node, 2026-11-06), so each
- * is appended as it came.
+ * The header the site's answer headers travel in (W38-S1283 (4), the architect window's ruling of 2026-11-06): base64 of
+ * a UTF-8 JSON list of [name, value] pairs, each Set-Cookie its own pair. The egress clerk takes a browser answer's
+ * headers from it alone, so a header Cloudflare's edge adds to this answer (NEL, Report-To, Alt-Svc, Server and CF-Ray,
+ * measured 2026-11-06) never reaches the browser as the site's. Its caps are the daemon's (daemon/src/egress_relay.py:
+ * MAX_HEADERS, MAX_HEADER_VALUE, MAX_ANSWER_HEADERS_BYTES), so the clerk reads every list this route builds.
  */
-function answerHeaders(upstream: Headers): Headers {
-  const out = new Headers();
+const ANSWER_HEADERS = "x-bishop-browser-answer-headers";
+const MAX_ANSWER_PAIRS = 128;
+const MAX_ANSWER_VALUE = 16384;
+const MAX_ANSWER_HEADERS_BYTES = 60 * 1024;
+
+/**
+ * The site's answer headers as ANSWER_HEADERS carries them, less the hop-by-hop ones and the encoding headers (a Worker
+ * reads the decoded body of a gzip or br answer and the runtime recomputes its length; measured in workerd, 2026-11-06),
+ * or null when they are over the caps. Iterating a Headers yields each Set-Cookie on its own (the Fetch standard;
+ * measured in workerd and Node, 2026-11-06).
+ */
+function answerHeaderList(upstream: Headers): string | null {
+  const pairs: [string, string][] = [];
   for (const [k, v] of upstream.entries()) {
     const lk = k.toLowerCase();
     if (HOP_BY_HOP.has(lk) || lk === "content-encoding" || lk === "content-length") continue;
-    out.append(k, v);
+    if (v.length > MAX_ANSWER_VALUE) return null;
+    pairs.push([k, v]);
   }
-  return out;
+  if (pairs.length > MAX_ANSWER_PAIRS) return null;
+  let binary = "";
+  for (const b of new TextEncoder().encode(JSON.stringify(pairs))) binary += String.fromCharCode(b);
+  const encoded = btoa(binary);
+  return encoded.length > MAX_ANSWER_HEADERS_BYTES ? null : encoded;
 }
 
 export async function handleBrowserEgress(
@@ -313,6 +333,15 @@ export async function handleBrowserEgress(
     });
   }
 
+  // Step 5c — the site's headers as the one list the egress clerk unwraps; over the daemon's caps → a named 502.
+  const answerList = answerHeaderList(upstream.headers);
+  if (answerList === null) {
+    emitError(requestId, ip, requestSize, 502, "upstream_headers_too_large", startedAt, tokenId);
+    return jsonError(502, "upstream_headers_too_large", {
+      message: "the site's answer headers are over the relay's caps",
+    });
+  }
+
   // Step 6 — metadata-only audit (Pillar 1 — no token, no body, no host-content).
   // The destination host is proxy-OBSERVED (the forward above went to it); the
   // ProxyLogEvent allowlist structurally guarantees the BODY is never logged.
@@ -334,10 +363,10 @@ export async function handleBrowserEgress(
     upstream_status: upstream.status,
   });
 
-  // Step 7 — stream the upstream response straight back: its status and its headers, less the hop-by-hop ones and
-  // the encoding the runtime has undone (W38-S1283 (4); before, only Content-Type came back).
+  // Step 7 — stream the upstream response straight back: its status, its body and the site's headers in the one list
+  // header the egress clerk unwraps (W38-S1283 (4); before, only Content-Type came back).
   return new Response(upstream.body, {
     status: upstream.status,
-    headers: answerHeaders(upstream.headers),
+    headers: { [ANSWER_HEADERS]: answerList },
   });
 }

@@ -31,6 +31,9 @@
  *       naming no cause and none of the runtime's text.
  *  (13) ★ other answers — a site's 503 passes back unchanged; a 200 control.
  *  (14) ★ own fault — a fault before the forward surfaces as itself.
+ *  (15) ★ list caps — over 128 headers, a value over 16384 or a list over
+ *       60 KiB → 502 upstream_headers_too_large; at the caps, the list built.
+ *  (16) ★ own answers — the proxy's own answers carry no list.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -208,6 +211,13 @@ describe("S5c-3b isPublicHttpUrl SSRF gate", () => {
 
 // ── handler probes ──────────────────────────────────────────────────────────
 
+/** The site's headers as the clerk unwraps them: the decoded X-Bishop-Browser-Answer-Headers list (W38-S1283 (4)). */
+function answerList(resp: Response): [string, string][] {
+  const encoded = resp.headers.get("x-bishop-browser-answer-headers");
+  if (encoded === null) throw new Error("no answer list");
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), (c) => c.charCodeAt(0))));
+}
+
 interface Capture {
   url: string;
   headers: Headers;
@@ -259,7 +269,7 @@ describe("S5c-3b /browser-egress route", () => {
     // The forward went to the request-determined target — host AND path/query.
     expect(captures[0].url).toBe(PUBLIC_TARGET);
     expect(new URL(captures[0].url).hostname).toBe(PUBLIC_HOST);
-    expect(resp.headers.get("content-type")).toContain("application/json");
+    expect(answerList(resp)).toContainEqual(["content-type", "application/json"]);
   });
 
   // ── Probe 2: ★ SSRF-reject-no-forward ───────────────────────────────────
@@ -385,7 +395,7 @@ describe("S5c-3b /browser-egress route", () => {
   });
 
   // ── Probe 10: ★ the answer's headers ─────────────────────────────────────
-  it("★ answer: a 3xx comes back with Location and each Set-Cookie, less hop-by-hop and encoding headers", async () => {
+  it("★ answer: a 3xx comes back with Location and each Set-Cookie in the one list, less hop-by-hop and encoding headers", async () => {
     installFetch(() => {
       const h = new Headers({ location: "https://example.com/next", connection: "keep-alive",
         "content-encoding": "gzip", "cache-control": "no-store", "content-type": "text/html" });
@@ -397,12 +407,12 @@ describe("S5c-3b /browser-egress route", () => {
     const resp = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
     expect(resp.status).toBe(302);
     expect(mockFetch).toHaveBeenCalledOnce(); // returned to the browser, not followed
-    expect(resp.headers.get("location")).toBe("https://example.com/next");
-    expect(resp.headers.get("cache-control")).toBe("no-store");
-    expect(resp.headers.get("connection")).toBeNull();
-    expect(resp.headers.get("content-encoding")).toBeNull();
-    const cookies = (resp.headers as Headers & { getSetCookie: () => string[] }).getSetCookie();
-    expect(cookies).toEqual(["a=1; Path=/", "b=2; Path=/; HttpOnly"]);
+    expect(answerList(resp)).toEqual([
+      ["cache-control", "no-store"], ["content-type", "text/html"], ["location", "https://example.com/next"],
+      ["set-cookie", "a=1; Path=/"], ["set-cookie", "b=2; Path=/; HttpOnly"],
+    ]);
+    // The site's headers travel only in the list: none on this answer itself, to which the edge adds its own.
+    expect([...resp.headers.keys()]).toEqual(["x-bishop-browser-answer-headers"]);
   });
 
   // ── Probe 11: ★ a TLS failure reaching the site (W38-S1283) ────────────────
@@ -443,7 +453,7 @@ describe("S5c-3b /browser-egress route", () => {
     const down = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
     expect(down.status).toBe(503);
     expect(await down.text()).toBe("down for maintenance");
-    expect(down.headers.get("retry-after")).toBe("120");
+    expect(answerList(down)).toContainEqual(["retry-after", "120"]);
     const fine = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
     expect(fine.status).toBe(200);
     expect(await fine.text()).toBe("fine");
@@ -456,6 +466,39 @@ describe("S5c-3b /browser-egress route", () => {
     await req.arrayBuffer(); // the body is spent, so the route's own read of it fails
     await expect(handleBrowserEgress(req, makeEnv(), makeCtx())).rejects.toThrow();
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  // ── Probe 15: ★ the list's caps (the daemon's) ───────────────────────────
+  it("★ list caps: over 128 headers, a value over 16384 or a list over 60 KiB → 502 upstream_headers_too_large", async () => {
+    const many = new Headers();
+    for (let i = 0; i < 129; i++) many.append(`x-h${i}`, "v");
+    const long = new Headers({ "x-long": "v".repeat(16385) });
+    const wide = new Headers();
+    for (let i = 0; i < 8; i++) wide.append(`x-w${i}`, "w".repeat(8000));
+    const atCaps = new Headers({ "x-long": "v".repeat(16384) });
+    for (let i = 0; i < 126; i++) atCaps.append(`x-h${i}`, "v"); // with the string body's own Content-Type: 128
+    const answers = [many, long, wide, atCaps];
+    installFetch((call) => new Response("x", { status: 200, headers: answers[call] }));
+    for (const label of ["129 headers", "a 16385-byte value", "a list over 60 KiB"]) {
+      const resp = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+      expect(resp.status, label).toBe(502);
+      expect(((await resp.json()) as { error: string }).error, label).toBe("upstream_headers_too_large");
+    }
+    const control = await handleBrowserEgress(browserReq(), makeEnv(), makeCtx());
+    expect(control.status).toBe(200);
+    expect(answerList(control)).toHaveLength(128); // at the caps: 128 headers, one value of 16384
+  });
+
+  // ── Probe 16: ★ the proxy's own answers carry no list ─────────────────────
+  it("★ own answers: a forward-failure 502, a 401 and a 400 carry no list", async () => {
+    installFetch(() => new Response(null, { status: 526 }));
+    const answers = [
+      await handleBrowserEgress(browserReq(), makeEnv(), makeCtx()),
+      await handleBrowserEgress(browserReq({ bearer: null }), makeEnv(), makeCtx()),
+      await handleBrowserEgress(browserReq({ method: "TRACE" }), makeEnv(), makeCtx()),
+    ];
+    expect(answers.map((r) => r.status)).toEqual([502, 401, 400]);
+    for (const r of answers) expect(r.headers.get("x-bishop-browser-answer-headers")).toBeNull();
   });
 
   // ── Probe 6: ★ host-observed, body-never-logged (§3.3) ───────────────────
