@@ -10,6 +10,11 @@
  * Refresh cadence: quarterly + before each major launch.
  * Bidirectional live daemon-side drift detection folds into §H-DYNAMIC.
  *
+ * W38-S1306 (a), 2026-11-07: the fixture lists the daemon's 71 BYOK providers, and marks in
+ * daemon_direct_providers the 37 of its extended catalog, each with the host the daemon reaches it at.
+ * The daemon reaches those directly through its egress clerk and the proxy routes none of them, so the
+ * gate leaves them out as it leaves out the carve-outs.
+ *
  * This file is the assertion surface — .github/workflows/provider-roster-drift.yml
  * is the enforcement surface that runs npm test on every push/PR.
  */
@@ -47,6 +52,7 @@ function buildRequiredKeys(
   proxyRoster: Set<string>,
 ): { required: Set<string>; missing: string[] } {
   const carveouts = new Set<string>(Object.keys(fixt.no_egress_carveouts));
+  const daemonDirect = new Set<string>(Object.keys(fixt.daemon_direct_providers));
   const aliases = fixt.proxy_key_aliases as Record<string, string>;
 
   const allDaemonKeys = [
@@ -60,6 +66,7 @@ function buildRequiredKeys(
 
   for (const daemonKey of allDaemonKeys) {
     if (carveouts.has(daemonKey)) continue; // local-only, no proxy egress needed
+    if (daemonDirect.has(daemonKey)) continue; // reached daemon-direct, never through the proxy
     const proxyKey: string = (aliases as Record<string, string>)[daemonKey] ?? daemonKey;
     required.add(proxyKey);
     if (!proxyRoster.has(proxyKey)) {
@@ -85,11 +92,32 @@ describe("roster-drift: proxy routed roster ⊇ daemon universe − carve-outs",
     expect(carveouts.length).toBeGreaterThan(0);
   });
 
-  it("fixture byok_providers count matches daemon universe (34 BYOK)", () => {
+  it("fixture byok_providers count matches daemon universe (71 BYOK)", () => {
     // W38-S964 added sakana_fugu (26 → 27); W38-S966 added 6 OpenAI-compatible
     // open-weights-serving clouds (meta_llama, deepinfra, baseten, inference_net,
-    // siliconflow, featherless) → 33; W38-S968 added novita → 34.
-    expect((fixture.byok_providers as string[]).length).toBe(34);
+    // siliconflow, featherless) → 33; W38-S968 added novita → 34; the daemon's extended
+    // catalog (DIM 9, models.dev) added 37, each reached daemon-direct → 71 (W38-S1306 (a)).
+    expect((fixture.byok_providers as string[]).length).toBe(71);
+  });
+
+  it("fixture daemon_direct_providers: the 37 BYOK providers the daemon reaches directly, each with its host", () => {
+    const byok = new Set<string>(fixture.byok_providers as string[]);
+    const carveouts = new Set<string>(Object.keys(fixture.no_egress_carveouts));
+    const direct = Object.entries(fixture.daemon_direct_providers as Record<string, string>);
+    expect(direct.length).toBe(37);
+    for (const [daemonKey, host] of direct) {
+      expect(byok.has(daemonKey), `${daemonKey} is not a daemon BYOK provider`).toBe(true);
+      expect(carveouts.has(daemonKey), `${daemonKey} is also a carve-out`).toBe(false);
+      expect(host).toMatch(/^[a-z0-9.-]+\.[a-z]+$/);
+    }
+  });
+
+  it("the proxy routes none of the daemon-direct providers", () => {
+    // A provider the proxy also routes is not one the gate may leave out unread.
+    const proxyRoster = buildProxyRoster();
+    const aliases = fixture.proxy_key_aliases as Record<string, string>;
+    const routed = Object.keys(fixture.daemon_direct_providers).filter((k) => proxyRoster.has(aliases[k] ?? k));
+    expect(routed).toEqual([]);
   });
 
   it("fixture oauth_providers count matches daemon universe (5 OAuth)", () => {
