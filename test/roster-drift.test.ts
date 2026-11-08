@@ -12,6 +12,7 @@
  *
  * W38-S1306 (a), 2026-11-07: the fixture lists the daemon's 71 BYOK providers, and marks in
  * daemon_direct_providers the 37 of its extended catalog, each with the host the daemon reaches it at.
+ * 68 and 34 since the founder's decision of 2026-11-08 removed inference, github_models and iflowcn.
  * The daemon reaches those directly through its egress clerk and the proxy routes none of them, so the
  * gate leaves them out as it leaves out the carve-outs.
  *
@@ -92,19 +93,20 @@ describe("roster-drift: proxy routed roster ⊇ daemon universe − carve-outs",
     expect(carveouts.length).toBeGreaterThan(0);
   });
 
-  it("fixture byok_providers count matches daemon universe (71 BYOK)", () => {
+  it("fixture byok_providers count matches daemon universe (68 BYOK)", () => {
     // W38-S964 added sakana_fugu (26 → 27); W38-S966 added 6 OpenAI-compatible
     // open-weights-serving clouds (meta_llama, deepinfra, baseten, inference_net,
     // siliconflow, featherless) → 33; W38-S968 added novita → 34; the daemon's extended
-    // catalog (DIM 9, models.dev) added 37, each reached daemon-direct → 71 (W38-S1306 (a)).
-    expect((fixture.byok_providers as string[]).length).toBe(71);
+    // catalog (DIM 9, models.dev) added 37, each reached daemon-direct → 71 (W38-S1306 (a)); the founder's
+    // decision of 2026-11-08 removed inference, github_models and iflowcn → 68.
+    expect((fixture.byok_providers as string[]).length).toBe(68);
   });
 
-  it("fixture daemon_direct_providers: the 37 BYOK providers the daemon reaches directly, each with its host", () => {
+  it("fixture daemon_direct_providers: the 34 BYOK providers the daemon reaches directly, each with its host", () => {
     const byok = new Set<string>(fixture.byok_providers as string[]);
     const carveouts = new Set<string>(Object.keys(fixture.no_egress_carveouts));
     const direct = Object.entries(fixture.daemon_direct_providers as Record<string, string>);
-    expect(direct.length).toBe(37);
+    expect(direct.length).toBe(34);
     for (const [daemonKey, host] of direct) {
       expect(byok.has(daemonKey), `${daemonKey} is not a daemon BYOK provider`).toBe(true);
       expect(carveouts.has(daemonKey), `${daemonKey} is also a carve-out`).toBe(false);
