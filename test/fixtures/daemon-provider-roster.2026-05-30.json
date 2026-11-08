@@ -1,5 +1,5 @@
 {
-  "_note": "Daemon provider universe snapshot. Generated from health.py:802 universe = _MODEL_OAUTH_PROVIDERS | set(byok_provider_registry.list_wired_providers()) | {'claude','openai','gemini'}. Refresh cadence: quarterly and before each major launch. Bidirectional live drift detection (daemon-side fixture freshness check) in tests/test_byok_openclaw_parity.py. W38-S1306 (a), 2026-11-07: byok_providers is the daemon's BYOK_PROVIDER_SPECS at 594511184, and daemon_direct_providers names the providers of the daemon's extended catalog (daemon/src/model/byok_extended_catalog.py), each with the host the daemon reaches it at: the daemon reaches them directly through its egress clerk and the proxy routes none of them, so the drift gate leaves them out as it leaves out the carve-outs. The founder's decision of 2026-11-08 removed inference (a models.dev duplicate on inference.net, which its docs say does not work; inference_net covers the service), github_models (GitHub Models, retired 2026-07-30) and iflowcn from the daemon, so byok_providers is 68 and daemon_direct_providers 34.",
+  "_note": "Daemon provider universe snapshot. Generated from health.py:802 universe = _MODEL_OAUTH_PROVIDERS | set(byok_provider_registry.list_wired_providers()) | {'claude','openai','gemini'}. Refresh cadence: quarterly and before each major launch. Bidirectional live drift detection (daemon-side fixture freshness check) in tests/test_byok_openclaw_parity.py. W38-S1306 (a), 2026-11-07: byok_providers is the daemon's BYOK_PROVIDER_SPECS at 594511184, and daemon_direct_providers names the providers of the daemon's extended catalog (daemon/src/model/byok_extended_catalog.py), each with the host the daemon reaches it at: the daemon reaches them directly through its egress clerk and the proxy routes none of them, so the drift gate leaves them out as it leaves out the carve-outs. The founder's decision of 2026-11-08 removed inference (a models.dev duplicate on inference.net, which its docs say does not work; inference_net covers the service), github_models (GitHub Models, retired 2026-07-30) and iflowcn from the daemon, so byok_providers is 68 and daemon_direct_providers 34. The same decision moved fastrouter to api.fastrouter.ai, the host its docs give (the daemon's branch provider-hosts-fastrouter-minimax).",
   "generated_from": "daemon/src/health.py:802",
   "snapshot_date": "2026-11-08",
   "refresh_cadence": "quarterly + before each major launch",
@@ -81,7 +81,7 @@
     "cortecs": "api.cortecs.ai",
     "digitalocean": "inference.do-ai.run",
     "evroc": "models.think.evroc.com",
-    "fastrouter": "go.fastrouter.ai",
+    "fastrouter": "api.fastrouter.ai",
     "friendli": "api.friendli.ai",
     "gmicloud": "api.gmi-serving.com",
     "helicone": "ai-gateway.helicone.ai",
