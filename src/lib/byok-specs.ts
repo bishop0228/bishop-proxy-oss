@@ -61,8 +61,11 @@ export const BYOK_UPSTREAM_SPECS: Readonly<Record<string, ByokUpstreamSpec>> = O
   },
 
   // minimax — MiniMax. // SECURITY-REVIEW: [SR] China-based; data-residency policy applies.
+  // api.minimax.io, the international host its docs give for /v1/text/chatcompletion_v2 and /v1/models
+  // (platform.minimax.io/docs/api-reference/text-post), since the founder's decision of 2026-11-08; it was
+  // api.minimax.chat, which none of those pages names.
   minimax: {
-    upstreamHost: "api.minimax.chat",
+    upstreamHost: "api.minimax.io",
     operatorKeyVar: "MINIMAX_API_KEY",
     baseUrlVar: "MINIMAX_BASE_URL",
   },

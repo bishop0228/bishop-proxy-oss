@@ -27,6 +27,7 @@ import {
   _resetForTesting,
   _setAllowlistForTesting,
 } from "../src/lib/outbound-allowlist";
+import { BYOK_UPSTREAM_SPECS } from "../src/lib/byok-specs";
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -221,7 +222,7 @@ describe("ALLOWED_OUTBOUND_HOSTS", () => {
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.deepseek.com");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.fireworks.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.groq.com");
-    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.minimax.chat");
+    expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.minimax.io");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.mistral.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.moonshot.ai");
     expect(ALLOWED_OUTBOUND_HOSTS).toContain("api.perplexity.ai");
@@ -471,5 +472,14 @@ describe("installFetchAllowlist() takes no extraHosts argument", () => {
     // Historically extraHosts could widen the allowlist; now it's fixed.
     await expect(fetch("https://staging.internal/api")).rejects.toThrow(OutboundHostNotAllowed);
     expect(mock).not.toHaveBeenCalled();
+  });
+});
+
+// The founder's decision of 2026-11-08: MiniMax moves to api.minimax.io, the international host its docs give
+// (platform.minimax.io/docs/api-reference/text-post), and api.minimax.chat leaves the allowlist with it.
+describe("MiniMax's upstream", () => {
+  it("is api.minimax.io, and api.minimax.chat is no longer allowed", () => {
+    expect(BYOK_UPSTREAM_SPECS.minimax.upstreamHost).toBe("api.minimax.io");
+    expect((ALLOWED_OUTBOUND_HOSTS as readonly string[]).includes("api.minimax.chat")).toBe(false);
   });
 });

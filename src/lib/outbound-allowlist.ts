@@ -78,7 +78,7 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   "api.deepseek.com",
   "api.fireworks.ai",
   "api.groq.com",
-  "api.minimax.chat",
+  "api.minimax.io",
   "api.mistral.ai",
   "api.moonshot.ai",
   "api.perplexity.ai",
