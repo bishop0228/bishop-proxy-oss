@@ -135,6 +135,12 @@ export async function handleBillingPortal(request: Request, env: Env): Promise<R
   if (!c.ok) return c.response;
   const auth = { authorization: `Bearer ${env.STRIPE_RESTRICTED_KEY}` };
 
+  // The customer the webhook recorded for this billing id comes first: Stripe's search is not read-after-write ("Don't
+  // use search for read-after-write flows ... Under normal operating conditions, data is searchable in under 1
+  // minute", docs.stripe.com/search, read 2026-11-11), so a subscription made seconds ago is found here, not there.
+  const recorded = await recordedCustomer(env, c.billingId);
+  if (recorded) return portalSession(env, auth, recorded);
+
   const query = `metadata['billing_id']:'${c.billingId}'`;
   const search = await fetchFollowingSameHost(
     `${stripeBase(env)}/v1/subscriptions/search?query=${encodeURIComponent(query)}`,
@@ -150,7 +156,26 @@ export async function handleBillingPortal(request: Request, env: Env): Promise<R
       ? first.customer
       : (first.customer as { id?: unknown } | null)?.id;
   if (typeof customer !== "string" || !customer) return json(502, { error: "stripe_bad_response" });
+  return portalSession(env, auth, customer);
+}
 
+/** The Stripe customer the webhook recorded for *billingId* (AuthStoreDO /lookup-customer), or null. */
+async function recordedCustomer(env: Env, billingId: string): Promise<string | null> {
+  try {
+    const stub = env.AUTH_STORE.get(env.AUTH_STORE.idFromName("global"));
+    const resp = await stub.fetch(`https://internal/lookup-customer?b=${encodeURIComponent(billingId)}`, {
+      method: "GET",
+    });
+    if (!resp.ok) return null;
+    const customer = ((await resp.json()) as { customer?: unknown }).customer;
+    return typeof customer === "string" && customer ? customer : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A customer-portal session for *customer*, answered as {url} on billing.stripe.com. */
+async function portalSession(env: Env, auth: Record<string, string>, customer: string): Promise<Response> {
   const resp = await fetchFollowingSameHost(`${stripeBase(env)}/v1/billing_portal/sessions`, {
     method: "POST",
     headers: { ...auth, "content-type": "application/x-www-form-urlencoded" },

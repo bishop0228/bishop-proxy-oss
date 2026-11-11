@@ -104,16 +104,19 @@ async function postSubscriptionEvent(
   worker: Unstable_DevWorker,
   eventId: string,
   metadata: Record<string, string>,
+  opts: { customer?: string; type?: string; status?: string; subscription?: string; subscriptionCreated?: number } = {},
 ) {
   const body = JSON.stringify({
     id: eventId,
-    type: "customer.subscription.updated",
+    type: opts.type ?? "customer.subscription.updated",
     data: {
       object: {
-        id: "sub_test_mock",
-        status: "active",
+        id: opts.subscription ?? "sub_test_mock",
+        created: opts.subscriptionCreated ?? Math.floor(Date.now() / 1000),
+        status: opts.status ?? "active",
         items: { data: [{ current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400 }] },
         metadata,
+        ...(opts.customer ? { customer: opts.customer } : {}),
       },
     },
   });
@@ -135,6 +138,8 @@ describe("W38-S1326 (a) billing routes", () => {
   let mockUrl: string;
   let tokenA: string;
   let tokenB: string;
+  let tokenC: string;
+  let tokenD: string;
 
   type Last = {
     checkout: { auth: string | null; body: string | null } | null;
@@ -183,6 +188,8 @@ describe("W38-S1326 (a) billing routes", () => {
     await clearAuthRateLimits(worker);
     tokenA = await enroll(worker, "13".repeat(32));
     tokenB = await enroll(worker, "57".repeat(32));
+    tokenC = await enroll(worker, "9b".repeat(32));
+    tokenD = await enroll(worker, "d4".repeat(32));
   }, 60000);
 
   afterAll(async () => {
@@ -250,6 +257,86 @@ describe("W38-S1326 (a) billing routes", () => {
     const seen = await last();
     expect(seen.search).not.toBeNull();
     expect(seen.portal).toBeNull();
+  });
+
+  it("opens the portal for a subscription made seconds ago, from the customer its event recorded, before Stripe's search sees it", async () => {
+    // Stripe: "Don't use search for read-after-write flows ... data is searchable in under 1 minute" (docs.stripe.com/search).
+    const id = await checkoutId(tokenC);
+    const event = await postSubscriptionEvent(worker, "evt_billing_c_created", { billing_id: id }, {
+      customer: "cus_JustMade42",
+      type: "customer.subscription.created",
+    });
+    expect(await event.json()).toMatchObject({ status: "applied", customer_recorded: true });
+    // The mock's search still answers no subscription, as Stripe's does until it has indexed the new one.
+    const res = await post("/v1/billing/portal", tokenC);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://billing.stripe.com/p/session/test_mock" });
+    const seen = await last();
+    expect(seen.search).toBeNull();
+    expect(new URLSearchParams(seen.portal?.body ?? "").get("customer")).toBe("cus_JustMade42");
+  });
+
+  it("records a customer id of up to 255 letters, digits, '_' and '-', the form Stripe documents, and refuses any other", async () => {
+    // Stripe: "Make sure that your integration can handle Stripe-generated object IDs, which can contain up to 255
+    // characters" (docs.stripe.com/api-versions); customer IDs "can only contain alphanumeric and `_-` characters"
+    // (docs.stripe.com/changelog/2018-05-21).
+    const id = await checkoutId(tokenC);
+    const longest = "cus_" + "a1_-".repeat(62) + "Zz9";
+    expect(longest.length).toBe(255);
+    const kept = await postSubscriptionEvent(worker, "evt_billing_c_255", { billing_id: id }, { customer: longest });
+    expect(await kept.json()).toMatchObject({ status: "applied", customer_recorded: true });
+    for (const [eventId, refused] of [
+      ["evt_billing_c_256", longest + "x"],
+      ["evt_billing_c_slash", "cus_a/b"],
+      ["evt_billing_c_space", "cus_a b"],
+    ]) {
+      const res = await postSubscriptionEvent(worker, eventId, { billing_id: id }, { customer: refused });
+      expect(await res.json()).toMatchObject({ status: "applied", customer_recorded: false });
+    }
+    // The portal opens for the id recorded last, never for a refused one.
+    expect((await post("/v1/billing/portal", tokenC)).status).toBe(200);
+    expect(new URLSearchParams((await last()).portal?.body ?? "").get("customer")).toBe(longest);
+  });
+
+  it("keeps the customer of the newer subscription when an older subscription's event is delivered after it, and the portal opens for it", async () => {
+    // Stripe "doesn't guarantee the delivery of events in the order that they're generated" and retries a failed
+    // delivery "for up to three days" (docs.stripe.com/webhooks): subscription A's cancellation can arrive after the
+    // owner has bought B, which a new checkout gives a new customer.
+    const id = await checkoutId(tokenD);
+    const newer = await postSubscriptionEvent(worker, "evt_billing_d_b_created", { billing_id: id }, {
+      customer: "cus_NewerB",
+      type: "customer.subscription.created",
+      subscription: "sub_newer_b",
+      subscriptionCreated: 1893459600,
+    });
+    expect(await newer.json()).toMatchObject({ status: "applied", customer_recorded: true });
+    const older = await postSubscriptionEvent(worker, "evt_billing_d_a_deleted", { billing_id: id }, {
+      customer: "cus_OlderA",
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_older_a",
+      subscriptionCreated: 1893456000,
+    });
+    expect(await older.json()).toMatchObject({ status: "applied", customer_recorded: false });
+    expect((await post("/v1/billing/portal", tokenD)).status).toBe(200);
+    expect(new URLSearchParams((await last()).portal?.body ?? "").get("customer")).toBe("cus_NewerB");
+  });
+
+  it("lets an event of a subscription created in the same second replace the record", async () => {
+    const id = await checkoutId(tokenD);
+    for (const [eventId, customer, subscription] of [
+      ["evt_billing_d_tie_first", "cus_TieFirst", "sub_tie_first"],
+      ["evt_billing_d_tie_second", "cus_TieSecond", "sub_tie_second"],
+    ]) {
+      const res = await postSubscriptionEvent(worker, eventId, { billing_id: id }, {
+        customer,
+        subscription,
+        subscriptionCreated: 1893459600,
+      });
+      expect(await res.json()).toMatchObject({ status: "applied", customer_recorded: true });
+    }
+    expect((await post("/v1/billing/portal", tokenD)).status).toBe(200);
+    expect(new URLSearchParams((await last()).portal?.body ?? "").get("customer")).toBe("cus_TieSecond");
   });
 
   it("maps a subscription's billing id to its token's tier shard, and only that token's", async () => {

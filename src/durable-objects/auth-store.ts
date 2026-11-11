@@ -25,6 +25,13 @@ export interface AuthRecord {
   account_mode: "managed" | "byok";
 }
 
+/** A billing id's Stripe customer (W38-S1326 (a)), kept under customer:<billing id> with its subscription's creation
+ *  time (Stripe's `created`, seconds since the epoch), so an older subscription's event cannot replace it. */
+export interface CustomerRecord {
+  customer: string;
+  subscription_created: number;
+}
+
 export interface AuthStoreEnv {
   TIER_CACHE: DurableObjectNamespace;
 }
@@ -151,6 +158,74 @@ export class AuthStoreDO {
         });
       }
       return new Response(JSON.stringify({ token_id: tokenId }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    // W38-S1326 (a): the Stripe customer of a billing id, recorded by the webhook from the subscription's own events, so
+    // the billing portal can open for a subscription made seconds ago: Stripe's subscription search is not read-after-
+    // write ("data is searchable in under 1 minute"). Keyed by the billing id, an HMAC the proxy derives from a token.
+    // The customer id is held to Stripe's documented form and no narrower: "Make sure that your integration can handle
+    // Stripe-generated object IDs, which can contain up to 255 characters", and a change of "length or format",
+    // "adding or removing fixed prefixes", is one Stripe calls backward-compatible (docs.stripe.com/api-versions);
+    // customer IDs "can only contain alphanumeric and `_-` characters" (docs.stripe.com/changelog/2018-05-21).
+    // The record keeps the customer of the newest subscription: an event of a subscription created before the one
+    // recorded is refused (409) and the record kept, because Stripe "doesn't guarantee the delivery of events in the
+    // order that they're generated" and retries a failed delivery "for up to three days" (docs.stripe.com/webhooks). A
+    // subscription created in the same second may replace it.
+    if (request.method === "POST" && url.pathname === "/bind-customer") {
+      const body = (await request.json()) as {
+        billing_id?: unknown;
+        customer?: unknown;
+        subscription_created?: unknown;
+      };
+      const created = body.subscription_created;
+      if (
+        typeof body.billing_id !== "string" || !/^[0-9a-f]{64}$/.test(body.billing_id) ||
+        typeof body.customer !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(body.customer) ||
+        typeof created !== "number" || !Number.isSafeInteger(created) || created < 0
+      ) {
+        return new Response(JSON.stringify({ error: "invalid_fields" }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      const key = `customer:${body.billing_id}`;
+      const record: CustomerRecord = { customer: body.customer, subscription_created: created };
+      let kept = false;
+      await this.state.storage.transaction(async (txn) => {
+        const existing = await txn.get<CustomerRecord>(key);
+        if (existing && existing.subscription_created > created) {
+          kept = true;
+          return;
+        }
+        await txn.put(key, record);
+      });
+      if (kept) {
+        return new Response(JSON.stringify({ error: "older_subscription" }), {
+          status: 409,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ status: "bound" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    if (request.method === "GET" && url.pathname === "/lookup-customer") {
+      const b = url.searchParams.get("b") ?? "";
+      const customer = /^[0-9a-f]{64}$/.test(b)
+        ? (await this.state.storage.get<CustomerRecord>(`customer:${b}`))?.customer
+        : undefined;
+      if (!customer) {
+        return new Response(JSON.stringify({ error: "not_found" }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ customer }), {
         status: 200,
         headers: { "content-type": "application/json" },
       });

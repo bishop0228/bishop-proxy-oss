@@ -24,6 +24,10 @@ interface StripeEvent {
       // billing_id: set by /v1/billing/checkout (W38-S1326 (a)), derived from the buyer's token. user_id: the
       // legacy key, kept for any subscription created before it.
       metadata?: { user_id?: string; billing_id?: string };
+      // The subscription's customer (an id, or the object when expanded): recorded per billing id for the portal.
+      customer?: string | { id?: string } | null;
+      // When the subscription was created, in seconds since the epoch: orders the customer record.
+      created?: number;
     };
   };
 }
@@ -216,10 +220,32 @@ async function applyByBillingId(env: Env, event: StripeEvent, billingId: string)
   } catch {
     return reply(500, { error: "billing_apply_failed" });
   }
+  // Record the subscription's customer for the portal, which reads it before Stripe's search. Best effort: a missed
+  // record leaves the portal on the search, which finds the subscription once Stripe has indexed it.
+  // Ordered by the subscription's own creation time, never the event's: Stripe "doesn't guarantee the delivery of
+  // events in the order that they're generated", and "Don't use `created` to determine event order"
+  // (docs.stripe.com/webhooks, "Event ordering"). AuthStoreDO keeps the newest subscription's customer.
+  let customerRecorded = false;
+  const sub = event.data.object;
+  const customer = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
+  if (typeof customer === "string" && customer && typeof sub.created === "number") {
+    try {
+      const authStub = env.AUTH_STORE.get(env.AUTH_STORE.idFromName("global"));
+      const bound = await authStub.fetch("https://internal/bind-customer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ billing_id: billingId, customer, subscription_created: sub.created }),
+      });
+      customerRecorded = bound.ok;
+    } catch {
+      customerRecorded = false;
+    }
+  }
   return reply(200, {
     status: "applied",
     tier,
     billing_id_prefix: billingId.slice(0, 8),
     token_shard_written: true,
+    customer_recorded: customerRecorded,
   });
 }
