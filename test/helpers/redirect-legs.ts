@@ -22,6 +22,9 @@ export interface RouteUnderTest {
   sameHostStatus?: number;
   /** Where the route's secret travels: a header (default), or the body (a token exchange). */
   credentialIn?: "headers" | "body";
+  /** Upstream calls the route makes to the same host after the redirected one succeeds (0 by default; the billing
+   *  portal's session call after its subscription search, W38-S1326 (a)). */
+  followUpCalls?: number;
 }
 
 type Call = { url: string; headers: Headers; body: string | null };
@@ -66,7 +69,8 @@ export function redirectLegs(label: string, route: () => RouteUnderTest): void {
     );
     const resp = await r.invoke();
     expect(resp.status).toBe(200);
-    expect(calls.map((c) => new URL(c.url).hostname)).toEqual([r.host, r.host]);
+    expect(calls.map((c) => new URL(c.url).hostname)).toEqual(
+      Array(2 + (r.followUpCalls ?? 0)).fill(r.host));
     if ((r.credentialIn ?? "headers") === "body") {
       // A token exchange: the secret is the body, which a same-host 307 re-sends unchanged.
       expect(calls[0].body).toBeTruthy();

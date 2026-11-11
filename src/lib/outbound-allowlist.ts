@@ -235,6 +235,13 @@ export const ALLOWED_OUTBOUND_HOSTS = Object.freeze([
   // novita.ai/docs 2026-06-23. +1 → length 90→91. Running total 91 = 42 provider
   // + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace.
   "api.novita.ai",          // Novita AI (/openai/v1/)
+  // ── W38-S1326 (a) (the founder's decisions of 2026-11-10): +1 billing host ──
+  // Stripe's API, for the two billing routes (src/routes/billing.ts): the proxy creates a Checkout Session and a
+  // customer-portal session, and searches the caller's subscription, with a restricted key held as a Worker secret
+  // (Checkout Sessions write, Customer Portal write, Subscriptions read), so Bishop's Stripe key is on no user's
+  // machine. Not a model upstream, MCP or registry host. Frozen exact-match. +1 → length 91→92. Running total 92 =
+  // 42 provider + 44 MCP + 1 model-registry + 3 worker-egress + 1 HuggingFace + 1 billing.
+  "api.stripe.com",         // Stripe API (/v1/checkout/sessions, /v1/subscriptions/search, /v1/billing_portal/sessions)
 ] as const);
 
 /**

@@ -3,7 +3,8 @@
  *
  * Routes:
  *   /v1/tier, /stripe/webhook
- *   /v1/challenge, /v1/enroll, /v1/messages, /v1/tier/bind, /v1/quota
+ *   /v1/challenge, /v1/enroll, /v1/messages, /v1/quota
+ *   /v1/billing/checkout, /v1/billing/portal (W38-S1326 (a); /v1/tier/bind removed with them)
  */
 
 // No-exfiltration enforcement: block outbound fetches to any host other than
@@ -30,7 +31,7 @@ import { handleGemini } from "./routes/gemini";
 import { handleGeminiNative } from "./routes/gemini-native";
 import { handleGeminiFiles } from "./routes/gemini-files";
 import { handleProviderFiles } from "./routes/provider-files";
-import { handleTierBind } from "./routes/tier-bind";
+import { handleBillingCheckout, handleBillingPortal } from "./routes/billing";
 import { handleQuotaGet } from "./routes/quota";
 import { handleAdminRateLimitClear } from "./routes/admin-rate-limit-clear";
 import { handleAdminTokenRevoke } from "./routes/admin-token-revoke";
@@ -135,6 +136,16 @@ export interface Env {
   HF_BASE_URL?: string;
   USER_INDEX_HMAC_KEY: string;
   ADMIN_TOKEN: string;
+  // W38-S1326 (a) billing: the restricted Stripe key (a secret: Checkout Sessions write, Customer Portal write,
+  // Subscriptions read), the Solo price and the pages Stripe returns the owner to, all set at deploy. Until they are,
+  // /v1/billing/checkout and /v1/billing/portal answer 503 billing_not_configured.
+  STRIPE_RESTRICTED_KEY?: string;
+  STRIPE_SOLO_PRICE_ID?: string;
+  BILLING_SUCCESS_URL?: string;
+  BILLING_CANCEL_URL?: string;
+  BILLING_RETURN_URL?: string;
+  // W38-S1326 (a) Stripe API base-URL override (test seam only)
+  STRIPE_API_BASE_URL?: string;
   CHALLENGE_TTL?: string;
   TARGET_ZERO_BITS?: string;
   TARGET_MEMORY_KIB?: string;
@@ -282,8 +293,13 @@ export default {
     if (request.method === "POST" && url.pathname === "/browser-egress") {
       return handleBrowserEgress(request, env, ctx);
     }
-    if (request.method === "POST" && url.pathname === "/v1/tier/bind") {
-      return handleTierBind(request, env);
+    // W38-S1326 (a): the proxy starts a Solo purchase and opens its management page for the device its token
+    // authenticates. /v1/tier/bind is removed: its latest-bind-wins let any token bind any user id to itself.
+    if (request.method === "POST" && url.pathname === "/v1/billing/checkout") {
+      return handleBillingCheckout(request, env);
+    }
+    if (request.method === "POST" && url.pathname === "/v1/billing/portal") {
+      return handleBillingPortal(request, env);
     }
     if (request.method === "GET" && url.pathname === "/v1/quota") {
       return handleQuotaGet(request, env, ctx);

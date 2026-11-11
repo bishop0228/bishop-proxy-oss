@@ -16,7 +16,9 @@ at proxy.mybishop.ai.
 - `POST /v1/challenge` — issues an Argon2id proof-of-work challenge for enrollment
 - `POST /v1/enroll` — device enrollment with Argon2id PoW
 - `POST /v1/messages` — inference forwarding with quota enforcement
-- `POST /v1/tier/bind` — bind a Stripe-known user to a device token
+- `POST /v1/billing/checkout` — starts a Solo purchase (a Stripe Checkout Session) for the device the bearer token
+  authenticates, carrying an id derived from that token
+- `POST /v1/billing/portal` — opens the Stripe customer portal for that device's subscription
 - `GET /v1/quota` — daemon-facing quota and usage readback
 
 ## Outbound fetch allowlist

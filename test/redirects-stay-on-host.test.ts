@@ -5,7 +5,7 @@
  * One entry per upstream call site: all sixteen credential-carrying routes, the OAuth route twice
  * (completion and token) and the provider Files route twice (an OpenAI upload with the user's key, an
  * Anthropic upload with the operator's, since W38-S1165 leaves a managed device only the Anthropic
- * upload). Each entry drives the route's real handler through the three legs in
+ * upload), and the two billing routes, which carry Bishop's restricted Stripe key (W38-S1326 (a)). Each entry drives the route's real handler through the three legs in
  * test/helpers/redirect-legs.ts: another host refused by name and never contacted, the same host
  * followed with the same credential, no Location refused. The three anonymous model routes keep
  * their own allowlisted hop loop and are covered by their own tests; the sandboxed-browser leg
@@ -29,6 +29,7 @@ import { handleGeminiFiles } from "../src/routes/gemini-files";
 import { handleAzure } from "../src/routes/azure";
 import { handleBedrock } from "../src/routes/bedrock";
 import { handleVertex } from "../src/routes/vertex";
+import { handleBillingCheckout, handleBillingPortal } from "../src/routes/billing";
 import type { Env } from "../src/index";
 
 const DEVICE = "bsk_staging_" + "v".repeat(24);
@@ -95,6 +96,13 @@ function post(url: string, headers: Record<string, string>, body: string): Reque
 }
 
 const CHAT_BODY = JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "hi" }] });
+const BILLING_VARS = {
+  STRIPE_RESTRICTED_KEY: "rk_test_restricted",
+  STRIPE_SOLO_PRICE_ID: "price_test",
+  BILLING_SUCCESS_URL: "https://mybishop.ai/billing/success",
+  BILLING_CANCEL_URL: "https://mybishop.ai/billing/cancel",
+  BILLING_RETURN_URL: "https://mybishop.ai/billing/return",
+};
 const chatOk = () =>
   json({ id: "x", object: "chat.completion", choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } });
 
@@ -228,6 +236,21 @@ const ROUTES: Array<[string, () => RouteUnderTest]> = [
       { "x-bishop-upstream-key": "us-central1:ya29.user-token" },
       JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] })), makeEnv("byok"), makeCtx()),
     ok: () => json({ candidates: [] }),
+  })],
+  // W38-S1326 (a): the billing routes carry Bishop's restricted Stripe key. The portal's first call is the
+  // subscription search, which these legs redirect; its answer here serves both of the portal's calls.
+  ["billing checkout (the restricted Stripe key)", () => ({
+    host: "api.stripe.com",
+    invoke: () => handleBillingCheckout(post("http://proxy/v1/billing/checkout", {}, "{}"),
+      makeEnv("managed", BILLING_VARS)),
+    ok: () => json({ id: "cs_test", url: "https://checkout.stripe.com/c/pay/cs_test" }),
+  })],
+  ["billing portal (the restricted Stripe key)", () => ({
+    host: "api.stripe.com",
+    invoke: () => handleBillingPortal(post("http://proxy/v1/billing/portal", {}, "{}"),
+      makeEnv("managed", BILLING_VARS)),
+    ok: () => json({ data: [{ customer: "cus_test" }], url: "https://billing.stripe.com/p/session/test" }),
+    followUpCalls: 1,
   })],
 ];
 

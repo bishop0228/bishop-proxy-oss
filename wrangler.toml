@@ -90,13 +90,27 @@ TARGET_ZERO_BITS = "10"
 #   STRIPE_WEBHOOK_SECRET   - signs incoming Stripe webhook calls
 #   ANTHROPIC_API_KEY       - upstream Anthropic API credential
 #   USER_INDEX_HMAC_KEY     - HMAC-SHA256 key for AuthStoreDO
-#                             user:<HMAC(user_id)> → token_id index. Required
-#                             before /v1/tier/bind and Stripe two-shard write
-#                             can compute lookups.
+#                             user:<HMAC(...)> → token_id index: the billing id the
+#                             checkout binds, and the legacy user_id the Stripe
+#                             two-shard write looks up.
 #   CF_AIG_TOKEN            - Cloudflare AI Gateway authenticated-gateway token
 #                             (cf-aig-authorization) for the bishop-prod gateway.
 #                             Required to route datacenter-IP-blocked providers
 #                             (DeepSeek) via AI Gateway. `wrangler secret put CF_AIG_TOKEN`.
+#   STRIPE_RESTRICTED_KEY   - W38-S1326 (a): a Stripe RESTRICTED key (rk_live_...) with
+#                             Checkout Sessions: write, Customer portal: write and
+#                             Subscriptions: read, nothing else. /v1/billing/checkout and
+#                             /v1/billing/portal create sessions with it. `wrangler secret put
+#                             STRIPE_RESTRICTED_KEY`.
+#
+# Vars the billing routes need, set at the deploy (in [vars] above, or the dashboard):
+#   STRIPE_SOLO_PRICE_ID    - the Solo plan's recurring Price id (price_...).
+#   BILLING_SUCCESS_URL     - the page Stripe sends the owner to after a completed checkout.
+#   BILLING_CANCEL_URL      - the page Stripe sends the owner to after an abandoned checkout.
+#   BILLING_RETURN_URL      - the page the customer portal returns the owner to.
+# Until the key and these vars are set, both billing routes answer 503
+# billing_not_configured and call nothing. USER_INDEX_HMAC_KEY (above) also keys the billing
+# id, HMAC("billing:" + token_id), that the checkout binds to the buyer's token.
 
 [env.spike]
 name = "bishop-proxy-spike"
