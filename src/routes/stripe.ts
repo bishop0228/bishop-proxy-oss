@@ -1,6 +1,7 @@
 import type { Env } from "../index";
 import { computeUserHash } from "../lib/user-hash";
-import { isBillingId } from "./billing";
+import { isBillingId, stripeBase } from "./billing";
+import { fetchFollowingSameHost } from "../lib/redirect-policy";
 
 interface StripeEvent {
   id: string;
@@ -109,18 +110,26 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
   }
   // (the legacy user_id path; billing ids and subscriptions with neither key returned above)
 
-  const { tier, setBody } = tierUpdate(event);
+  // W38-S1335 (a): the subscription as Stripe holds it now, not the event's snapshot; a read that fails answers 500, so
+  // Stripe sends the event again.
+  const current = await readSubscription(env, sub.id);
+  if (!current) {
+    return new Response(JSON.stringify({ error: "subscription_read_failed" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  const applyBody = subscriptionBody(current, event.id);
 
   // Shard 1 (legacy/user-keyed): preserved for backward compatibility with
   // /v1/tier reads and for users who haven't yet bound a token.
-  const userStub = env.TIER_CACHE.get(env.TIER_CACHE.idFromName(userId));
-  await userStub.fetch(
-    new Request("https://internal/set", {
-      method: "POST",
+  const userApplied = await applyToShard(env, userId, applyBody);
+  if (userApplied === null) {
+    return new Response(JSON.stringify({ error: "tier_write_failed" }), {
+      status: 500,
       headers: { "content-type": "application/json" },
-      body: setBody,
-    })
-  );
+    });
+  }
 
   // Shard 2 (token-keyed). Look up token_id via AuthStoreDO
   // /lookup-user using HMAC(user_id). 404 means "user has not bound a token
@@ -137,28 +146,20 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
     );
     if (lookupResp.ok) {
       const { token_id: tokenId } = (await lookupResp.json()) as { token_id: string };
-      const tokenStub = env.TIER_CACHE.get(env.TIER_CACHE.idFromName(tokenId));
-      await tokenStub.fetch(
-        new Request("https://internal/set", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: setBody,
-        })
-      );
-      tokenShardWritten = true;
+      tokenShardWritten = (await applyToShard(env, tokenId, applyBody)) !== null;
     }
   } catch (err) {
     // Token-keyed shard write is best-effort — failing it must not fail the
     // webhook (Stripe retries on non-2xx, which would re-apply the user-keyed
-    // shard via the idempotency guard but provides no path to recover the
-    // token-keyed write).
+    // shard but provides no path to recover the token-keyed write).
     void err;
   }
 
   return new Response(
     JSON.stringify({
       status: "applied",
-      tier,
+      tier: userApplied.tier,
+      subscription_record: userApplied.outcome,
       user_id_prefix: userId.slice(0, 8),
       token_shard_written: tokenShardWritten,
     }),
@@ -166,39 +167,89 @@ export async function handleStripeWebhook(request: Request, env: Env): Promise<R
   );
 }
 
-/** The tier an event sets, and the body TierCacheDO /set takes. */
-function tierUpdate(event: StripeEvent): { tier: "free" | "solo"; setBody: string } {
-  const sub = event.data.object;
-  const isActive =
-    (event.type === "customer.subscription.updated" || event.type === "customer.subscription.created") &&
-    sub.status === "active";
-  const tier: "free" | "solo" = isActive ? "solo" : "free";
-  // current_period_end moved from Subscription to Subscription Items in
-  // Stripe API 2025-09-30.clover and later. Read from items first; fall
-  // back to the legacy field for older API versions.
-  const currentPeriodEnd =
-    sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
-  const validUntil =
-    isActive && currentPeriodEnd
-      ? new Date(currentPeriodEnd * 1000).toISOString()
-      : new Date().toISOString();
-  return {
-    tier,
-    setBody: JSON.stringify({ tier, valid_until: validUntil, stripe_event_id: event.id }),
-  };
+/**
+ * W38-S1335 (a), the founder's decision of 2026-11-11: the subscription as Stripe holds it now. The webhook applies
+ * this, never the event's snapshot: Stripe "doesn't guarantee the delivery of events in the order that they're
+ * generated" and retries a failed delivery "for up to three days", and "You can also use the API to retrieve any
+ * missing objects" (docs.stripe.com/webhooks, "Event ordering"). A late or repeated event then applies today's state.
+ */
+interface StripeSubscription {
+  id: string;
+  status: string;
+  created?: number;
+  current_period_end?: number;
+  items?: { data?: Array<{ current_period_end?: number }> };
+  customer?: string | { id?: string } | null;
+}
+
+/** Read subscription *id* from Stripe with the restricted key (Subscriptions read), or null when it cannot be had:
+ *  no key, an id not in Stripe's form, a refused redirect, an answer that is not 2xx, or one that does not name it. */
+async function readSubscription(env: Env, id: unknown): Promise<StripeSubscription | null> {
+  if (!env.STRIPE_RESTRICTED_KEY || typeof id !== "string" || !/^[A-Za-z0-9_-]{1,255}$/.test(id)) return null;
+  try {
+    const resp = await fetchFollowingSameHost(`${stripeBase(env)}/v1/subscriptions/${encodeURIComponent(id)}`, {
+      method: "GET",
+      headers: { authorization: `Bearer ${env.STRIPE_RESTRICTED_KEY}` },
+    });
+    if (!resp.ok) return null;
+    const body = (await resp.json()) as Partial<StripeSubscription> | null;
+    if (!body || body.id !== id || typeof body.status !== "string") return null;
+    return body as StripeSubscription;
+  } catch {
+    return null;
+  }
+}
+
+/** The body TierCacheDO /apply-subscription takes for *sub*, read for the event *eventId*. */
+function subscriptionBody(sub: StripeSubscription, eventId: string): string {
+  // current_period_end moved from Subscription to Subscription Items in Stripe API 2025-09-30.clover and later. Read
+  // from items first; fall back to the legacy field for older API versions.
+  const periodEnd = sub.items?.data?.[0]?.current_period_end ?? sub.current_period_end;
+  return JSON.stringify({
+    subscription: {
+      id: sub.id,
+      status: sub.status,
+      current_period_end: typeof periodEnd === "number" ? periodEnd : null,
+      created: typeof sub.created === "number" ? sub.created : null,
+    },
+    stripe_event_id: eventId,
+  });
+}
+
+/** Apply *body* to the tier shard named *name*: the tier the shard now derives and what became of the record, or null
+ *  when the write failed. */
+async function applyToShard(
+  env: Env,
+  name: string,
+  body: string,
+): Promise<{ tier: "free" | "solo"; outcome: string } | null> {
+  const stub = env.TIER_CACHE.get(env.TIER_CACHE.idFromName(name));
+  const resp = await stub.fetch(
+    new Request("https://internal/apply-subscription", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body,
+    }),
+  );
+  if (!resp.ok) return null;
+  const out = (await resp.json()) as { status?: string; record?: { tier?: "free" | "solo" } };
+  if (out.record?.tier !== "free" && out.record?.tier !== "solo") return null;
+  return { tier: out.record.tier, outcome: out.status ?? "applied" };
 }
 
 /**
  * W38-S1326 (a): a subscription /v1/billing/checkout created names its buyer's billing id, which the checkout bound
  * to the buyer's token. Map it through AuthStoreDO /lookup-user and write the token-keyed shard, the one /v1/quota
- * and /v1/messages read. An id no checkout bound is acknowledged and ignored; a lookup or write that fails answers
- * 500, so Stripe sends the event again (TierCacheDO /set is idempotent per stripe_event_id).
+ * and /v1/messages read, from the subscription as Stripe holds it now (W38-S1335 (a)). An id no checkout bound is
+ * acknowledged and ignored; a lookup, a read from Stripe or a write that fails answers 500, so Stripe sends the event
+ * again.
  */
 async function applyByBillingId(env: Env, event: StripeEvent, billingId: string): Promise<Response> {
   const reply = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   if (!isBillingId(billingId)) return reply(200, { status: "invalid_billing_id" });
-  const { tier, setBody } = tierUpdate(event);
+  let applied: { tier: "free" | "solo"; outcome: string } | null;
+  let current: StripeSubscription | null;
   try {
     const authStub = env.AUTH_STORE.get(env.AUTH_STORE.idFromName("global"));
     const lookupResp = await authStub.fetch(
@@ -208,15 +259,10 @@ async function applyByBillingId(env: Env, event: StripeEvent, billingId: string)
     if (lookupResp.status === 404) return reply(200, { status: "unknown_billing_id" });
     if (!lookupResp.ok) return reply(500, { error: "lookup_failed" });
     const { token_id: tokenId } = (await lookupResp.json()) as { token_id: string };
-    const tokenStub = env.TIER_CACHE.get(env.TIER_CACHE.idFromName(tokenId));
-    const setResp = await tokenStub.fetch(
-      new Request("https://internal/set", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: setBody,
-      }),
-    );
-    if (!setResp.ok) return reply(500, { error: "tier_write_failed" });
+    current = await readSubscription(env, event.data.object.id);
+    if (!current) return reply(500, { error: "subscription_read_failed" });
+    applied = await applyToShard(env, tokenId, subscriptionBody(current, event.id));
+    if (!applied) return reply(500, { error: "tier_write_failed" });
   } catch {
     return reply(500, { error: "billing_apply_failed" });
   }
@@ -226,15 +272,14 @@ async function applyByBillingId(env: Env, event: StripeEvent, billingId: string)
   // events in the order that they're generated", and "Don't use `created` to determine event order"
   // (docs.stripe.com/webhooks, "Event ordering"). AuthStoreDO keeps the newest subscription's customer.
   let customerRecorded = false;
-  const sub = event.data.object;
-  const customer = typeof sub.customer === "string" ? sub.customer : sub.customer?.id;
-  if (typeof customer === "string" && customer && typeof sub.created === "number") {
+  const customer = typeof current.customer === "string" ? current.customer : current.customer?.id;
+  if (typeof customer === "string" && customer && typeof current.created === "number") {
     try {
       const authStub = env.AUTH_STORE.get(env.AUTH_STORE.idFromName("global"));
       const bound = await authStub.fetch("https://internal/bind-customer", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ billing_id: billingId, customer, subscription_created: sub.created }),
+        body: JSON.stringify({ billing_id: billingId, customer, subscription_created: current.created }),
       });
       customerRecorded = bound.ok;
     } catch {
@@ -243,7 +288,8 @@ async function applyByBillingId(env: Env, event: StripeEvent, billingId: string)
   }
   return reply(200, {
     status: "applied",
-    tier,
+    tier: applied.tier,
+    subscription_record: applied.outcome,
     billing_id_prefix: billingId.slice(0, 8),
     token_shard_written: true,
     customer_recorded: customerRecorded,

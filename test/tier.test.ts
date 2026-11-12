@@ -2,6 +2,10 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { unstable_dev, Unstable_DevWorker } from "wrangler";
 
 const STRIPE_TEST_SECRET = "test_secret";
+const RESTRICTED_KEY = "rk_test_tier_key";
+
+// The mock Stripe API the webhook reads each subscription from (W38-S1335 (a)); set in beforeAll.
+let stripeMock: { mock: Unstable_DevWorker; url: string } | null = null;
 
 async function signStripeBody(rawBody: string, timestamp: number): Promise<string> {
   const signedPayload = `${timestamp}.${rawBody}`;
@@ -23,17 +27,23 @@ async function postSubscriptionEvent(
   worker: Unstable_DevWorker,
   opts: { eventId: string; userId: string; periodEnd: number },
 ) {
+  const object = {
+    id: "sub_test",
+    status: "active",
+    items: { data: [{ current_period_end: opts.periodEnd }] },
+    metadata: { user_id: opts.userId },
+  };
+  // W38-S1335 (a): the webhook reads the subscription from Stripe; here Stripe holds what the event says.
+  if (!stripeMock) throw new Error("no mock Stripe API");
+  const set = await stripeMock.mock.fetch(`${stripeMock.url}/__subscription_state`, {
+    method: "POST",
+    body: JSON.stringify(object),
+  });
+  if (!set.ok) throw new Error("the mock refused the subscription state");
   const body = JSON.stringify({
     id: opts.eventId,
     type: "customer.subscription.updated",
-    data: {
-      object: {
-        id: "sub_test",
-        status: "active",
-        items: { data: [{ current_period_end: opts.periodEnd }] },
-        metadata: { user_id: opts.userId },
-      },
-    },
+    data: { object },
   });
   const sig = await signStripeBody(body, Math.floor(Date.now() / 1000));
   return worker.fetch("/stripe/webhook", {
@@ -45,18 +55,33 @@ async function postSubscriptionEvent(
 
 describe("/v1/tier", () => {
   let worker: Unstable_DevWorker;
+  let mock: Unstable_DevWorker;
 
   beforeAll(async () => {
+    mock = await unstable_dev("test/mock-stripe-upstream.ts", {
+      config: "test/wrangler.mock.toml",
+      experimental: { disableExperimentalWarning: true, disableDevRegistry: true },
+      persist: false,
+    });
+    const mockUrl = `http://${mock.address}:${mock.port}`;
+    stripeMock = { mock, url: mockUrl };
     worker = await unstable_dev("src/index.ts", {
       experimental: { disableExperimentalWarning: true },
       env: "staging",
-      vars: { STRIPE_WEBHOOK_SECRET: STRIPE_TEST_SECRET, ANTHROPIC_API_KEY: "test_key" },
+      vars: {
+        STRIPE_WEBHOOK_SECRET: STRIPE_TEST_SECRET,
+        ANTHROPIC_API_KEY: "test_key",
+        STRIPE_RESTRICTED_KEY: RESTRICTED_KEY,
+        STRIPE_API_BASE_URL: mockUrl,
+        BISHOP_TEST_OUTBOUND_HOSTS: mock.address,
+      },
       persist: false,
     });
-  });
+  }, 60000);
 
   afterAll(async () => {
     await worker.stop();
+    await mock.stop();
   });
 
   it("returns 401 when Authorization missing", async () => {

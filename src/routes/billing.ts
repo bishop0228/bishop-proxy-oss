@@ -47,7 +47,7 @@ export function isBillingId(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
-function stripeBase(env: Env): string {
+export function stripeBase(env: Env): string {
   return (env.STRIPE_API_BASE_URL || STRIPE_API).replace(/\/+$/, "");
 }
 

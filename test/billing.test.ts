@@ -12,6 +12,7 @@ import { unstable_dev, Unstable_DevWorker } from "wrangler";
 import { argon2id } from "@noble/hashes/argon2.js";
 import { clearAuthRateLimits } from "./helpers/clear-auth-rate-limits";
 import { handleBillingCheckout, handleBillingPortal } from "../src/routes/billing";
+import { handleStripeWebhook } from "../src/routes/stripe";
 import type { Env } from "../src/index";
 
 const STRIPE_TEST_SECRET = "test_secret";
@@ -100,25 +101,48 @@ async function signStripeBody(rawBody: string, timestamp: number): Promise<strin
   return `t=${timestamp},v1=${toHex(new Uint8Array(sig))}`;
 }
 
+// The mock Stripe API the webhook reads each subscription from (W38-S1335 (a)); set in beforeAll.
+let stripeMock: { mock: Unstable_DevWorker; url: string } | null = null;
+
+/** What the mock Stripe API holds for a subscription now (its "id" names it). */
+async function setSubscriptionState(object: Record<string, unknown>) {
+  if (!stripeMock) throw new Error("no mock Stripe API");
+  const res = await stripeMock.mock.fetch(`${stripeMock.url}/__subscription_state`, {
+    method: "POST",
+    body: JSON.stringify(object),
+  });
+  if (!res.ok) throw new Error("the mock refused the subscription state");
+}
+
+/** Post a subscription event. Unless ``current`` is null, Stripe is first set to hold the event's own subscription,
+ *  with ``current``'s fields over it: the state the webhook reads, which may differ from the event's (W38-S1335 (a)). */
 async function postSubscriptionEvent(
   worker: Unstable_DevWorker,
   eventId: string,
   metadata: Record<string, string>,
-  opts: { customer?: string; type?: string; status?: string; subscription?: string; subscriptionCreated?: number } = {},
+  opts: {
+    customer?: string;
+    type?: string;
+    status?: string;
+    subscription?: string;
+    subscriptionCreated?: number;
+    periodEnd?: number;
+    current?: Record<string, unknown> | null;
+  } = {},
 ) {
+  const object = {
+    id: opts.subscription ?? "sub_test_mock",
+    created: opts.subscriptionCreated ?? Math.floor(Date.now() / 1000),
+    status: opts.status ?? "active",
+    items: { data: [{ current_period_end: opts.periodEnd ?? Math.floor(Date.now() / 1000) + 30 * 86400 }] },
+    metadata,
+    ...(opts.customer ? { customer: opts.customer } : {}),
+  };
+  if (opts.current !== null) await setSubscriptionState({ ...object, ...(opts.current ?? {}) });
   const body = JSON.stringify({
     id: eventId,
     type: opts.type ?? "customer.subscription.updated",
-    data: {
-      object: {
-        id: opts.subscription ?? "sub_test_mock",
-        created: opts.subscriptionCreated ?? Math.floor(Date.now() / 1000),
-        status: opts.status ?? "active",
-        items: { data: [{ current_period_end: Math.floor(Date.now() / 1000) + 30 * 86400 }] },
-        metadata,
-        ...(opts.customer ? { customer: opts.customer } : {}),
-      },
-    },
+    data: { object },
   });
   return worker.fetch("/stripe/webhook", {
     method: "POST",
@@ -140,6 +164,8 @@ describe("W38-S1326 (a) billing routes", () => {
   let tokenB: string;
   let tokenC: string;
   let tokenD: string;
+  let tokenE: string;
+  let tokenF: string;
 
   type Last = {
     checkout: { auth: string | null; body: string | null } | null;
@@ -168,6 +194,7 @@ describe("W38-S1326 (a) billing routes", () => {
       persist: false,
     });
     mockUrl = `http://${mock.address}:${mock.port}`;
+    stripeMock = { mock, url: mockUrl };
     worker = await unstable_dev("src/index.ts", {
       experimental: { disableExperimentalWarning: true },
       env: "staging",
@@ -190,6 +217,8 @@ describe("W38-S1326 (a) billing routes", () => {
     tokenB = await enroll(worker, "57".repeat(32));
     tokenC = await enroll(worker, "9b".repeat(32));
     tokenD = await enroll(worker, "d4".repeat(32));
+    tokenE = await enroll(worker, "e5".repeat(32));
+    tokenF = await enroll(worker, "f6".repeat(32));
   }, 60000);
 
   afterAll(async () => {
@@ -367,6 +396,201 @@ describe("W38-S1326 (a) billing routes", () => {
     expect(((await tier.json()) as { tier: string }).tier).toBe("solo");
   });
 
+  // ── W38-S1335 (a): the tier from the subscription as Stripe holds it, whatever order the events arrive in ────────
+  // Stripe "doesn't guarantee the delivery of events in the order that they're generated" and retries a failed
+  // delivery "for up to three days" (docs.stripe.com/webhooks). The four orderings below are those the filing names;
+  // they run through the legacy user_id shard, which /v1/tier reads by user id, so each test has a shard of its own.
+
+  const tierOf = async (userId: string): Promise<string> =>
+    ((await (await worker.fetch("/v1/tier", { headers: { authorization: `Bearer ${userId}` } })).json()) as {
+      tier: string;
+    }).tier;
+  const later = () => Math.floor(Date.now() / 1000) + 30 * 86400;
+
+  it("keeps a payer at Solo when a cancelled subscription's event arrives after the next one was bought (ordering 1)", async () => {
+    const u = "s1335-ordering-1-user";
+    const a = await postSubscriptionEvent(worker, "evt_s1335_1_a_created", { user_id: u }, {
+      type: "customer.subscription.created",
+      subscription: "sub_s1335_1a",
+    });
+    expect(await a.json()).toMatchObject({ status: "applied", tier: "solo" });
+    // A is cancelled in Stripe; its deleted event is held back. The owner buys B.
+    await setSubscriptionState({ id: "sub_s1335_1a", status: "canceled", metadata: { user_id: u } });
+    const b = await postSubscriptionEvent(worker, "evt_s1335_1_b_created", { user_id: u }, {
+      type: "customer.subscription.created",
+      subscription: "sub_s1335_1b",
+    });
+    expect(await b.json()).toMatchObject({ status: "applied", tier: "solo" });
+    // A's deleted event arrives last: A reads cancelled, B is still active.
+    const late = await postSubscriptionEvent(worker, "evt_s1335_1_a_deleted", { user_id: u }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_1a",
+    });
+    expect(await late.json()).toMatchObject({ status: "applied", tier: "solo" });
+    expect(await tierOf(u)).toBe("solo");
+  });
+
+  it("leaves Solo off when a subscription's active event is delivered after its cancellation (ordering 2)", async () => {
+    const u = "s1335-ordering-2-user";
+    await postSubscriptionEvent(worker, "evt_s1335_2_created", { user_id: u }, {
+      type: "customer.subscription.created",
+      subscription: "sub_s1335_2a",
+    });
+    expect(await tierOf(u)).toBe("solo");
+    const deleted = await postSubscriptionEvent(worker, "evt_s1335_2_deleted", { user_id: u }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_2a",
+    });
+    expect(await deleted.json()).toMatchObject({ status: "applied", tier: "free" });
+    // An updated (active) event from before the cancellation, retried, arrives now; Stripe holds the subscription
+    // cancelled.
+    const late = await postSubscriptionEvent(worker, "evt_s1335_2_updated", { user_id: u }, {
+      status: "active",
+      subscription: "sub_s1335_2a",
+      current: { status: "canceled" },
+    });
+    expect(await late.json()).toMatchObject({ status: "applied", tier: "free" });
+    expect(await tierOf(u)).toBe("free");
+  });
+
+  it("keeps Solo when a stale past_due event arrives after the active one that followed it (ordering 3)", async () => {
+    const u = "s1335-ordering-3-user";
+    // Payment failed (past_due), then succeeded (active); the active event is delivered first.
+    const active = await postSubscriptionEvent(worker, "evt_s1335_3_active", { user_id: u }, {
+      subscription: "sub_s1335_3a",
+    });
+    expect(await active.json()).toMatchObject({ status: "applied", tier: "solo" });
+    const stale = await postSubscriptionEvent(worker, "evt_s1335_3_past_due", { user_id: u }, {
+      status: "past_due",
+      subscription: "sub_s1335_3a",
+      current: { status: "active" },
+    });
+    expect(await stale.json()).toMatchObject({ status: "applied", tier: "solo" });
+    expect(await tierOf(u)).toBe("solo");
+  });
+
+  it("applies Stripe's state when an event is delivered again after a later one (ordering 4: X, Y, X)", async () => {
+    const u = "s1335-ordering-4-user";
+    const x = await postSubscriptionEvent(worker, "evt_s1335_4_x", { user_id: u }, { subscription: "sub_s1335_4a" });
+    expect(await x.json()).toMatchObject({ tier: "solo" });
+    const y = await postSubscriptionEvent(worker, "evt_s1335_4_y", { user_id: u }, {
+      status: "past_due",
+      subscription: "sub_s1335_4a",
+    });
+    expect(await y.json()).toMatchObject({ tier: "free" });
+    // X again (its snapshot says active), while Stripe still holds the subscription past_due.
+    const again = await postSubscriptionEvent(worker, "evt_s1335_4_x", { user_id: u }, {
+      subscription: "sub_s1335_4a",
+      current: { status: "past_due" },
+    });
+    expect(await again.json()).toMatchObject({ status: "applied", tier: "free" });
+    expect(await tierOf(u)).toBe("free");
+  });
+
+  it("answers 500 when the subscription cannot be read from Stripe, and changes no tier, so Stripe sends the event again", async () => {
+    const u = "s1335-read-fails-user";
+    await postSubscriptionEvent(worker, "evt_s1335_5_created", { user_id: u }, { subscription: "sub_s1335_5a" });
+    expect(await tierOf(u)).toBe("solo");
+    await mock.fetch(`${mockUrl}/__subscription_read_fails`, { method: "POST", body: JSON.stringify({ fail: true }) });
+    const res = await postSubscriptionEvent(worker, "evt_s1335_5_deleted", { user_id: u }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_5a",
+    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "subscription_read_failed" });
+    expect(await tierOf(u)).toBe("solo");
+    expect((await last()).hits).toBeGreaterThan(0);
+  });
+
+  it("answers 500, and changes no tier, when Stripe's answer to the read redirects to another host", async () => {
+    const u = "s1335-redirect-user";
+    await postSubscriptionEvent(worker, "evt_s1335_9_created", { user_id: u }, { subscription: "sub_s1335_9a" });
+    expect(await tierOf(u)).toBe("solo");
+    await mock.fetch(`${mockUrl}/__subscription_read_redirect`, {
+      method: "POST",
+      body: JSON.stringify({ to: "https://elsewhere.example/v1/subscriptions/sub_s1335_9a" }),
+    });
+    const res = await postSubscriptionEvent(worker, "evt_s1335_9_deleted", { user_id: u }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_9a",
+    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "subscription_read_failed" });
+    expect(await tierOf(u)).toBe("solo");
+  });
+
+  it("holds a cancelled subscription final when a read that raced the cancellation says active (two deliveries at once)", async () => {
+    const u = "s1335-final-user";
+    await postSubscriptionEvent(worker, "evt_s1335_6_created", { user_id: u }, { subscription: "sub_s1335_6a" });
+    await postSubscriptionEvent(worker, "evt_s1335_6_deleted", { user_id: u }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_6a",
+    });
+    expect(await tierOf(u)).toBe("free");
+    // A delivery handled at the same time read the subscription before the cancellation; its write lands after.
+    const raced = await postSubscriptionEvent(worker, "evt_s1335_6_updated", { user_id: u }, {
+      subscription: "sub_s1335_6a",
+      current: { status: "active" },
+    });
+    expect(await raced.json()).toMatchObject({ status: "applied", tier: "free", subscription_record: "final_kept" });
+    expect(await tierOf(u)).toBe("free");
+  });
+
+  it("reads Solo off once the subscription's period has ended, with no further event", async () => {
+    const u = "s1335-period-user";
+    const ended = Math.floor(Date.now() / 1000) - 60;
+    const res = await postSubscriptionEvent(worker, "evt_s1335_7_updated", { user_id: u }, {
+      subscription: "sub_s1335_7a",
+      periodEnd: later(),
+      current: { items: { data: [{ current_period_end: ended }] } },
+    });
+    expect(await res.json()).toMatchObject({ status: "applied", tier: "free" });
+    expect(await tierOf(u)).toBe("free");
+  });
+
+  it("applies the subscription as Stripe holds it on the billing-id path too, and reads it with the restricted key", async () => {
+    const id = await checkoutId(tokenE);
+    const res = await postSubscriptionEvent(worker, "evt_s1335_8_created", { billing_id: id }, {
+      type: "customer.subscription.created",
+      subscription: "sub_s1335_8a",
+      current: { status: "canceled" },
+    });
+    expect(await res.json()).toMatchObject({ status: "applied", tier: "free", token_shard_written: true });
+    const quota = (await (await worker.fetch("/v1/quota", { headers: { authorization: `Bearer ${tokenE}` } })).json()) as {
+      tier: string;
+    };
+    expect(quota.tier).toBe("free");
+    const seen = (await (await mock.fetch(`${mockUrl}/__last`)).json()) as { reads: string[]; read_auth: string | null };
+    expect(seen.reads).toContain("sub_s1335_8a");
+    expect(seen.read_auth).toBe(`Bearer ${RESTRICTED_KEY}`);
+  });
+
+  it("answers 500 on the billing-id path too when the subscription cannot be read, and changes no tier", async () => {
+    const id = await checkoutId(tokenF);
+    const created = await postSubscriptionEvent(worker, "evt_s1335_10_created", { billing_id: id }, {
+      type: "customer.subscription.created",
+      subscription: "sub_s1335_10a",
+    });
+    expect(await created.json()).toMatchObject({ status: "applied", tier: "solo" });
+    await mock.fetch(`${mockUrl}/__subscription_read_fails`, { method: "POST", body: JSON.stringify({ fail: true }) });
+    const res = await postSubscriptionEvent(worker, "evt_s1335_10_deleted", { billing_id: id }, {
+      type: "customer.subscription.deleted",
+      status: "canceled",
+      subscription: "sub_s1335_10a",
+    });
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "subscription_read_failed" });
+    const quota = (await (await worker.fetch("/v1/quota", { headers: { authorization: `Bearer ${tokenF}` } })).json()) as {
+      tier: string;
+    };
+    expect(quota.tier).toBe("solo");
+  });
+
   it("no longer serves /v1/tier/bind", async () => {
     const res = await worker.fetch("/v1/tier/bind", {
       method: "POST",
@@ -441,5 +665,52 @@ describe("W38-S1326 (a) billing routes before the deploy sets them up", () => {
       globalThis.fetch = realFetch;
     }
     expect(hosts).toEqual(["api.stripe.com", "api.stripe.com"]);
+  });
+});
+
+describe("W38-S1335 (a) the webhook's read of a subscription", () => {
+  it("does not follow a redirect off Stripe's host, nor send the key there, and answers 500 so Stripe sends the event again", async () => {
+    const seen: Array<{ host: string; auth: string | null }> = [];
+    const realFetch = globalThis.fetch;
+    // As Cloudflare's fetch does in its default mode, a request made without redirect: "manual" follows a redirect and
+    // carries its headers, the Authorization header among them, to the new host
+    // (developers.cloudflare.com/workers/runtime-apis/request/).
+    const stub = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      seen.push({ host: url.hostname, auth: new Headers(init?.headers).get("authorization") });
+      if (url.hostname === "api.stripe.com") {
+        const elsewhere = "https://evil.example/v1/subscriptions/sub_unit";
+        if (init?.redirect === "manual") return new Response(null, { status: 302, headers: { location: elsewhere } });
+        return stub(elsewhere, init);
+      }
+      return new Response(JSON.stringify({ id: "sub_unit", status: "active", metadata: { user_id: "user-unit" } }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    globalThis.fetch = stub as typeof fetch;
+    let res: Response;
+    try {
+      const body = JSON.stringify({
+        id: "evt_unit",
+        type: "customer.subscription.updated",
+        data: { object: { id: "sub_unit", status: "active", metadata: { user_id: "user-unit" } } },
+      });
+      const request = new Request("https://proxy.test/stripe/webhook", {
+        method: "POST",
+        headers: { "Stripe-Signature": await signStripeBody(body, Math.floor(Date.now() / 1000)) },
+        body,
+      });
+      // No tier shard is reachable here: the read must fail before one is written.
+      res = await handleStripeWebhook(
+        request,
+        { STRIPE_WEBHOOK_SECRET: STRIPE_TEST_SECRET, STRIPE_RESTRICTED_KEY: "rk_unit" } as unknown as Env,
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "subscription_read_failed" });
+    expect(seen).toEqual([{ host: "api.stripe.com", auth: "Bearer rk_unit" }]);
   });
 });
