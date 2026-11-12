@@ -45,6 +45,14 @@ TARGET_ZERO_BITS = "10"
 # (the authenticated-gateway token) is a SECRET set via `wrangler secret put` — see below.
 CF_AIG_ACCOUNT = "412d80cec803f73563b6b51e69b836ee"
 CF_AIG_GATEWAY = "bishop-prod"
+# W38-S1326 (a): the billing routes' settings, none of them secret (the restricted key is a SECRET, set via `wrangler
+# secret put STRIPE_RESTRICTED_KEY`). They live here rather than in the dashboard: without keep_vars, `wrangler deploy`
+# replaces the dashboard's variables with this section's. Set 2026-11-11: the Solo plan's monthly price in the live
+# account (Bishop Solo, $12.00 a month), and the pages Stripe returns the owner to.
+STRIPE_SOLO_PRICE_ID = "price_1TIan6PmZIRdTz4A3uCG0kBh"
+BILLING_SUCCESS_URL = "https://mybishop.ai/"
+BILLING_CANCEL_URL = "https://mybishop.ai/pricing"
+BILLING_RETURN_URL = "https://mybishop.ai/"
 
 [env.staging]
 name = "bishop-proxy-staging"
@@ -103,7 +111,7 @@ TARGET_ZERO_BITS = "10"
 #                             /v1/billing/portal create sessions with it. `wrangler secret put
 #                             STRIPE_RESTRICTED_KEY`.
 #
-# Vars the billing routes need, set at the deploy (in [vars] above, or the dashboard):
+# Vars the billing routes need, set in [vars] above (a variable set only in the dashboard is replaced at the next deploy):
 #   STRIPE_SOLO_PRICE_ID    - the Solo plan's recurring Price id (price_...).
 #   BILLING_SUCCESS_URL     - the page Stripe sends the owner to after a completed checkout.
 #   BILLING_CANCEL_URL      - the page Stripe sends the owner to after an abandoned checkout.
